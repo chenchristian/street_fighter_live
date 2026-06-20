@@ -11,11 +11,17 @@ export async function loadOnnxSession(modelUrl: string): Promise<InferenceSessio
   return cachedSession;
 }
 
+export interface InferenceResult {
+  label: string;
+  confidence: number;
+  allProbs: number[]; // one probability per class, in label order
+}
+
 export async function runInference(
   session: InferenceSession,
   window: Float32Array[],
   labels: string[]
-): Promise<{ label: string; confidence: number } | null> {
+): Promise<InferenceResult | null> {
   if (window.length < 5) return null;
 
   const ort = await import("onnxruntime-web");
@@ -30,8 +36,8 @@ export async function runInference(
   const max = Math.max(...logits);
   const exps = logits.map(v => Math.exp(v - max));
   const sum = exps.reduce((a, b) => a + b, 0);
-  const probs = exps.map(v => v / sum);
+  const allProbs = exps.map(v => v / sum);
 
-  const maxIdx = probs.indexOf(Math.max(...probs));
-  return { label: labels[maxIdx], confidence: probs[maxIdx] };
+  const maxIdx = allProbs.indexOf(Math.max(...allProbs));
+  return { label: labels[maxIdx], confidence: allProbs[maxIdx], allProbs };
 }

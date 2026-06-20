@@ -17,6 +17,7 @@ export interface PredictionState {
   label: string;
   confidence: number;
   direction: "LEFT" | "RIGHT" | null;
+  allProbs: number[];
 }
 
 export function usePosePipeline() {
@@ -28,6 +29,7 @@ export function usePosePipeline() {
 
   const [status,     setStatus]     = useState<PipelineStatus>("idle");
   const [prediction, setPrediction] = useState<PredictionState | null>(null);
+  const [labels,     setLabels]     = useState<string[]>([]);
   const [errorMsg,   setErrorMsg]   = useState("");
 
   const start = useCallback(async () => {
@@ -46,13 +48,16 @@ export function usePosePipeline() {
       // 2. Labels + models (concurrent)
       const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
 
-      const [labels, vision, onnxSession] = await Promise.all([
+      const [fetchedLabels, vision, onnxSession] = await Promise.all([
         fetch("/model/labels.json").then(r => r.json()) as Promise<string[]>,
         FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
         ),
         loadOnnxSession("/model/lstm_pose.onnx"),
       ]);
+
+      const labels = fetchedLabels;
+      setLabels(labels);
 
       const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
         baseOptions: {
@@ -108,7 +113,7 @@ export function usePosePipeline() {
               inferring = false;
               if (!result) return;
               const label = result.confidence < CONFIDENCE_THRESHOLD ? "idle" : result.label;
-              setPrediction({ label, confidence: result.confidence, direction: dir });
+              setPrediction({ label, confidence: result.confidence, direction: dir, allProbs: result.allProbs });
             });
           }
         } else {
@@ -137,5 +142,5 @@ export function usePosePipeline() {
     };
   }, []);
 
-  return { videoRef, canvasRef, status, prediction, errorMsg, start };
+  return { videoRef, canvasRef, status, prediction, labels, errorMsg, start };
 }
