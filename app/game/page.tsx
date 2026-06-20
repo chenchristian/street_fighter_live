@@ -112,15 +112,7 @@ export default function GamePage() {
       {/* Main layout */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ── Left: Game Engine ── */}
-        <div className="flex w-1/2 flex-col items-center justify-center border-r border-zinc-900">
-          <p className="text-xs uppercase tracking-widest text-zinc-800">
-            Game Engine
-          </p>
-          <p className="mt-1 text-[10px] text-zinc-900">Phase 3</p>
-        </div>
-
-        {/* ── Right: Webcam + Histogram ── */}
+        {/* ── Left: Webcam + Histogram ── */}
         <div className="flex w-1/2 flex-col">
 
           {/* Webcam — expands to fill when histogram hidden */}
@@ -216,6 +208,15 @@ export default function GamePage() {
             </div>
           )}
         </div>
+
+        {/* ── Right: Game Engine ── */}
+        <div className="flex w-1/2 flex-col items-center justify-center border-l border-zinc-900">
+          <p className="text-xs uppercase tracking-widest text-zinc-800">
+            Game Engine
+          </p>
+          <p className="mt-1 text-[10px] text-zinc-900">Phase 3</p>
+        </div>
+
       </div>
     </main>
   );
