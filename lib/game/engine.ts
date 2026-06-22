@@ -151,6 +151,7 @@ export function getState(
     if (force || (stateReq.includes(char.fet) && canCancel && notBlacklisted && hasMeter)) {
       if (sd.bar_use) char.gauges.super = (char.gauges.super ?? 0) - sd.bar_use;
       char.currentState = move;
+      char.currentCommand = [];  // reset so stale tokens (e.g. "hurt") don't re-trigger this state next frame
       char.boxes = { ...char.data.boxes };
       char.frame = [sd.framedata.length, 0];
       char.kara = 2;

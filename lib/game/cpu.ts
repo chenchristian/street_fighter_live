@@ -15,7 +15,7 @@ export const CV_TO_STATE: Record<string, string> = {
   spinning_back_high_kick: "Stand Roundhouse",
   crouching_low_sweep:     "Crouch Roundhouse",
   grab:                    "Grab",
-  hadouken:                "Stand Jab",       // Hadouken needs QCF; use Jab as placeholder
+  hadouken:                "Hadouken Jab",     // animation plays; no projectile (create_object not yet implemented)
   shoryuken:               "Shoryuken Jab",
 };
 
