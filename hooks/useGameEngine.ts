@@ -20,8 +20,9 @@ async function loadStageData(url: string): Promise<CharData> {
 }
 
 export type GameEngineStatus = "idle" | "loading" | "ready" | "error";
+export type CpuMode = "random" | "punchingBag";
 
-export function useGameEngine(prediction: PredictionState | null) {
+export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMode = "random") {
   const [status, setStatus] = useState<GameEngineStatus>("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -30,6 +31,8 @@ export function useGameEngine(prediction: PredictionState | null) {
   const stageRef = useRef<CharState | null>(null);
   const rafRef = useRef<number>(0);
   const prevLabelRef = useRef<string>("idle");
+  const cpuModeRef = useRef<CpuMode>(cpuMode);
+  cpuModeRef.current = cpuMode;
 
   const start = useCallback(async () => {
     setStatus("loading");
@@ -82,7 +85,7 @@ export function useGameEngine(prediction: PredictionState | null) {
         const stg = stageRef.current;
         if (!g || !stg || g.phase !== "playing") return;
 
-        tick(g, stg);
+        tick(g, stg, cpuModeRef.current);
 
         // Shallow copy to trigger React re-render for health bars etc.
         setGameState({ ...g });
@@ -132,12 +135,12 @@ export function useGameEngine(prediction: PredictionState | null) {
 
 // ─── One game tick ────────────────────────────────────────────────────────────
 
-function tick(g: GameState, stage: CharState): void {
+function tick(g: GameState, stage: CharState, cpuMode: CpuMode): void {
   g.frameCount++;
   g.roundTimer = Math.max(0, g.roundTimer - 1);
 
   // CPU AI
-  updateCpuInput(g.cpu, g.player);
+  if (cpuMode === "random") updateCpuInput(g.cpu, g.player);
 
   // Update both characters
   updateChar(g.player);

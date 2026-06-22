@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePosePipeline } from "@/hooks/usePosePipeline";
-import { useGameEngine } from "@/hooks/useGameEngine";
+import { useGameEngine, type CpuMode } from "@/hooks/useGameEngine";
 import GameCanvas from "./GameCanvas";
 
 // Fixed display order matching pose_viewer.py custom_order
@@ -90,6 +91,8 @@ function PredictionOverlay({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function GamePage() {
+  const [cpuMode, setCpuMode] = useState<CpuMode>("random");
+
   const {
     videoRef, canvasRef,
     status: poseStatus, prediction, labels,
@@ -99,7 +102,7 @@ export default function GamePage() {
   const {
     status: gameStatus, errorMsg: gameErr,
     gameState, start: startGame,
-  } = useGameEngine(prediction);
+  } = useGameEngine(prediction, cpuMode);
 
   const isPoseReady = poseStatus === "ready";
   const isGameReady = gameStatus === "ready";
@@ -150,6 +153,30 @@ export default function GamePage() {
               <p className="text-xs uppercase tracking-widest text-zinc-600">
                 Camera + Game
               </p>
+
+              {/* CPU mode selector */}
+              <div className="flex flex-col gap-2">
+                <p className="text-center text-[10px] uppercase tracking-widest text-zinc-600">Opponent</p>
+                {(["random", "punchingBag"] as const).map((mode) => (
+                  <label
+                    key={mode}
+                    className="flex cursor-pointer items-center gap-2"
+                  >
+                    <input
+                      type="radio"
+                      name="cpuMode"
+                      value={mode}
+                      checked={cpuMode === mode}
+                      onChange={() => setCpuMode(mode)}
+                      className="accent-red-500"
+                    />
+                    <span className="text-[11px] uppercase tracking-wider text-zinc-400">
+                      {mode === "random" ? "Random" : "Punching Bag"}
+                    </span>
+                  </label>
+                ))}
+              </div>
+
               <button
                 onClick={handleStart}
                 className="border border-red-500 px-6 py-3 text-xs font-black uppercase tracking-widest text-red-500 transition-colors hover:bg-red-500 hover:text-black"
