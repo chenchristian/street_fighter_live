@@ -101,7 +101,7 @@ export default function GamePage() {
 
   const {
     status: gameStatus, errorMsg: gameErr,
-    gameState, start: startGame,
+    gameState, start: startGame, activeMove,
   } = useGameEngine(prediction, cpuMode);
 
   const isPoseReady = poseStatus === "ready";
@@ -242,7 +242,7 @@ export default function GamePage() {
         </div>
 
         {/* ── Right: Game Engine (full height) ── */}
-        <div className="flex w-1/2 flex-col border-l border-zinc-900">
+        <div className="relative flex w-1/2 flex-col border-l border-zinc-900">
           {isGameReady ? (
             <GameCanvas gameState={gameState} />
           ) : (
@@ -253,6 +253,21 @@ export default function GamePage() {
               {gameStatus === "idle" && (
                 <p className="text-[10px] text-zinc-900">Click Start Game to begin</p>
               )}
+            </div>
+          )}
+          {/* Debug move overlay — big text visible from far away */}
+          {isGameReady && activeMove && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <span
+                key={activeMove}
+                className="text-center text-5xl font-black uppercase tracking-widest text-white"
+                style={{
+                  textShadow: "0 0 20px #fff, 2px 2px 0 #000, -2px -2px 0 #000",
+                  animation: "fadeOut 1.5s ease-out forwards",
+                }}
+              >
+                {MOVE_DISPLAY[activeMove] ?? activeMove}
+              </span>
             </div>
           )}
         </div>

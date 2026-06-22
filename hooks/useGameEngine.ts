@@ -34,6 +34,8 @@ export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMo
   const cpuModeRef = useRef<CpuMode>(cpuMode);
   cpuModeRef.current = cpuMode;
 
+  const [activeMove, setActiveMove] = useState<string | null>(null);
+
   const start = useCallback(async () => {
     setStatus("loading");
     try {
@@ -104,6 +106,20 @@ export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMo
     if (!g || !prediction) return;
 
     const label = prediction.label;
+
+    // Walking: direction on any frame where label is idle (checked before isNew guard)
+    if (label === "idle" && prediction.direction) {
+      const walkState = prediction.direction === "RIGHT"
+        ? (g.player.face === 1 ? "Walk Forward" : "Walk Backward")
+        : (g.player.face === 1 ? "Walk Backward" : "Walk Forward");
+      if (g.player.data.states[walkState]) {
+        g.player.bufferState[walkState] = 8;
+        g.player.inputInterPress = true;
+      }
+      prevLabelRef.current = label;
+      return;
+    }
+
     const isNew = label !== prevLabelRef.current && label !== "idle";
     prevLabelRef.current = label;
 
@@ -111,26 +127,16 @@ export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMo
 
     const stateName = CV_TO_STATE[label];
     if (stateName && g.player.data.states[stateName]) {
-      g.player.bufferState[stateName] = 6;
+      g.player.bufferState[stateName] = 18;
       g.player.inputInterPress = true;
-    }
-
-    // Handle walking based on direction
-    if (label === "idle" && prediction.direction) {
-      const walkState = prediction.direction === "RIGHT"
-        ? (g.player.face === 1 ? "Walk Forward" : "Walk Backward")
-        : (g.player.face === 1 ? "Walk Backward" : "Walk Forward");
-      if (g.player.data.states[walkState]) {
-        g.player.bufferState[walkState] = 4;
-        g.player.inputInterPress = true;
-      }
+      setActiveMove(label);
     }
   }, [prediction]);
 
   // Cleanup
   useEffect(() => () => { cancelAnimationFrame(rafRef.current); }, []);
 
-  return { status, errorMsg, gameState, start };
+  return { status, errorMsg, gameState, start, activeMove };
 }
 
 // ─── One game tick ────────────────────────────────────────────────────────────

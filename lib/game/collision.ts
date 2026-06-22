@@ -53,6 +53,8 @@ export function applyBoundingBox(
         // Add "landing" to command buffer for landing-state transitions
         char.currentCommand = [...char.currentCommand, "landing", char.currentState];
         char.inputInterPress = true;
+        // Open a cancel window so canTransition fires even inside infinite repeat_substate loops
+        char.cancel = ["neutral"];
         char.bufferState = {
           ...char.bufferState,
           "Neutral Landing": 4,
@@ -66,7 +68,7 @@ export function applyBoundingBox(
             if (!sd.command) continue;
             for (const cmdSeq of sd.command) {
               if (cmdSeq.some(part => part.includes("landing") && part.includes(char.currentState))) {
-                char.bufferState[stateName] = 4;
+                char.bufferState[stateName] = 8;
               }
             }
           }
