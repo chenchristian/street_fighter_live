@@ -7,15 +7,15 @@ export const CV_TO_STATE: Record<string, string> = {
   jab:                     "Stand Jab",
   cross:                   "Stand Strong",
   lead_hook:               "Stand Fierce",
-  rear_hook:               "Stand Strong",
-  uppercut:                "Shoryuken Jab",
+  rear_hook:               "Crouch Strong",
+  uppercut:                "Crouch Fierce",
   jumping_cross:           "Front Jump",
-  rear_low_kick:           "Stand Roundhouse",
+  rear_low_kick:           "Stand Short",
   side_kick:               "Stand Forward",
   spinning_back_high_kick: "Stand Roundhouse",
-  crouching_low_sweep:     "Crouch Short",
+  crouching_low_sweep:     "Crouch Roundhouse",
   grab:                    "Grab",
-  hadouken:                "Stand Jab",    // Hadouken needs QCF; use Jab instead
+  hadouken:                "Stand Jab",       // Hadouken needs QCF; use Jab as placeholder
   shoryuken:               "Shoryuken Jab",
 };
 

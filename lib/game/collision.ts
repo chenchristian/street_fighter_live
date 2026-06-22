@@ -53,8 +53,8 @@ export function applyBoundingBox(
         // Add "landing" to command buffer for landing-state transitions
         char.currentCommand = [...char.currentCommand, "landing", char.currentState];
         char.inputInterPress = true;
-        // Open a cancel window so canTransition fires even inside infinite repeat_substate loops
-        char.cancel = ["neutral"];
+        // [null] satisfies canCancel for states with no cancel property; "neutral" satisfies canTransition's not-all-null check
+        char.cancel = [null, "neutral"];
         char.bufferState = {
           ...char.bufferState,
           "Neutral Landing": 4,

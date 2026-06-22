@@ -108,8 +108,9 @@ export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMo
     const label = prediction.label;
 
     // Walking: direction on any frame where label is idle (checked before isNew guard)
+    // Camera is mirrored (scaleX -1) but MediaPipe uses unmirrored coords, so LEFT/RIGHT are flipped
     if (label === "idle" && prediction.direction) {
-      const walkState = prediction.direction === "RIGHT"
+      const walkState = prediction.direction === "LEFT"
         ? (g.player.face === 1 ? "Walk Forward" : "Walk Backward")
         : (g.player.face === 1 ? "Walk Backward" : "Walk Forward");
       if (g.player.data.states[walkState]) {
