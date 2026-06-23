@@ -308,10 +308,14 @@ const FRAME_HANDLERS: Record<string, Handler> = {
   trigg_state: (c, v) => {
     const stateName = v as string;
     if (c.data.states[stateName]) {
+      const fd = c.data.states[stateName].framedata;
       c.currentState = stateName;
+      c.currentCommand = [];
+      c.bufferState = {};
       c.boxes = { ...c.data.boxes };
-      c.frame = [c.data.states[stateName].framedata.length, 0];
-      nextFrame(c, c.data.states[stateName].framedata[0]);
+      // +1 compensates for the outer nextFrame's frame[0] -= 1 that fires after this handler
+      c.frame = [fd.length + 1, 0];
+      nextFrame(c, fd[0]);
     }
   },
   repeat_substate: (c, v) => {
@@ -331,10 +335,13 @@ const FRAME_HANDLERS: Record<string, Handler> = {
     for (const [name, opt] of entries) {
       r -= opt.chance;
       if (r <= 0 && c.data.states[name]) {
+        const fd = c.data.states[name].framedata;
         c.currentState = name;
+        c.currentCommand = [];
+        c.bufferState = {};
         c.boxes = { ...c.data.boxes };
-        c.frame = [c.data.states[name].framedata.length, 0];
-        nextFrame(c, c.data.states[name].framedata[0]);
+        c.frame = [fd.length + 1, 0];
+        nextFrame(c, fd[0]);
         break;
       }
     }

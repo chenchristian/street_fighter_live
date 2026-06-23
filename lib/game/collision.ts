@@ -62,12 +62,20 @@ export function applyBoundingBox(
         // Check if current state triggers a specific landing state
         const stateData = char.data.states[char.currentState];
         if (stateData) {
-          // Force landing state lookup
+          // Build the state list that getCommand would use for landing transitions.
+          // Must match ALL comma-separated gates in a step (same logic as engine getCommand).
+          const landingCtx = new Set<string>([
+            char.currentState,
+            "stand",
+            (char.gauges.health ?? 1) <= 0 ? "defeated" : "alive",
+            "landing",
+          ]);
           for (const stateName in char.data.states) {
             const sd = char.data.states[stateName];
             if (!sd.command) continue;
             for (const cmdSeq of sd.command) {
-              if (cmdSeq.some(part => part.includes("landing") && part.includes(char.currentState))) {
+              // Single-step landing commands: every gate must be in landingCtx
+              if (cmdSeq.length === 1 && cmdSeq[0].split(",").every(g => landingCtx.has(g))) {
                 char.bufferState[stateName] = 8;
               }
             }
