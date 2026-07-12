@@ -27,6 +27,7 @@ const CPU_ATTACK_STATES = [
 ];
 const CPU_TIMER_IDLE = 60;    // frames between CPU decisions when idle
 const CPU_TIMER_ATTACK = 30;  // frames between decisions when close
+const CPU_TIMER_SPECIAL = 45; // longer commitment after a special
 
 let cpuTimer = 0;
 
@@ -37,20 +38,30 @@ export function updateCpuInput(cpu: CharState, player: CharState): void {
   const dist = Math.abs(cpu.pos[0] - player.pos[0]);
   const isClose = dist < 250;
 
-  // Pick next move
-  cpuTimer = isClose ? CPU_TIMER_ATTACK : CPU_TIMER_IDLE;
-
   let stateName: string;
-  if (isClose && Math.random() < 0.65) {
+
+  // From full-screen, occasionally throw a fireball to zone the player.
+  if (dist > 550 && Math.random() < 0.4) {
+    stateName = "Hadouken Jab";
+    cpuTimer = CPU_TIMER_SPECIAL;
+  } else if (isClose && Math.random() < 0.15) {
+    // Up close, sometimes go for the Shoryuken (launcher) as a reversal.
+    stateName = "Shoryuken Jab";
+    cpuTimer = CPU_TIMER_SPECIAL;
+  } else if (isClose && Math.random() < 0.6) {
     stateName = CPU_ATTACK_STATES[Math.floor(Math.random() * CPU_ATTACK_STATES.length)];
-  } else {
+    cpuTimer = CPU_TIMER_ATTACK;
+  } else if (dist > 300) {
     // Move toward player if far (auto-face already orients toward opponent)
-    if (dist > 300) {
-      stateName = "Walk Forward";
-    } else {
-      stateName = CPU_IDLE_STATES[Math.floor(Math.random() * CPU_IDLE_STATES.length)];
-    }
+    stateName = "Walk Forward";
+    cpuTimer = CPU_TIMER_IDLE;
+  } else {
+    stateName = CPU_IDLE_STATES[Math.floor(Math.random() * CPU_IDLE_STATES.length)];
+    cpuTimer = CPU_TIMER_IDLE;
   }
+
+  // Fall back to a basic poke if this character lacks the chosen special.
+  if (!cpu.data.states[stateName]) stateName = "Stand Jab";
 
   if (cpu.data.states[stateName]) {
     cpu.bufferState[stateName] = 8;

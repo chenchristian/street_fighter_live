@@ -92,6 +92,7 @@ function PredictionOverlay({
 
 export default function GamePage() {
   const [cpuMode, setCpuMode] = useState<CpuMode>("random");
+  const [showBoxes, setShowBoxes] = useState(false);
 
   const {
     videoRef, canvasRef,
@@ -125,7 +126,15 @@ export default function GamePage() {
         <span className="text-xs uppercase tracking-widest text-zinc-700">
           Street Fighter Live
         </span>
-        <div className="w-24" />
+        <label className="flex w-24 cursor-pointer items-center justify-end gap-1.5">
+          <input
+            type="checkbox"
+            checked={showBoxes}
+            onChange={e => setShowBoxes(e.target.checked)}
+            className="accent-red-500"
+          />
+          <span className="text-[10px] uppercase tracking-widest text-zinc-600">Boxes</span>
+        </label>
       </div>
 
       {/* Hidden video element */}
@@ -244,7 +253,7 @@ export default function GamePage() {
         {/* ── Right: Game Engine (full height) ── */}
         <div className="relative flex w-1/2 flex-col border-l border-zinc-900">
           {isGameReady ? (
-            <GameCanvas gameState={gameState} />
+            <GameCanvas gameState={gameState} showBoxes={showBoxes} />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2">
               <p className="text-xs uppercase tracking-widest text-zinc-800">

@@ -4,7 +4,8 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useRef, useCallback } from "react";
-import type { GameState, CharState } from "@/lib/game/types";
+import type { GameState, CharState, BoxSet } from "@/lib/game/types";
+import { worldBox } from "@/lib/game/collision";
 
 // ─── Internal game-space constants ────────────────────────────────────────────
 const GAME_WIDTH  = 2600;   // stage bounding box width (matches Training.json)
@@ -13,7 +14,19 @@ const GAME_HEIGHT = 800;
 // ─── Props ───────────────────────────────────────────────────────────────────
 interface GameCanvasProps {
   gameState: GameState | null;
+  showBoxes?: boolean;
 }
+
+// Box colors matching Python's Util/Common_functions.py `colors`
+const BOX_COLORS: Record<string, string> = {
+  hurtbox:     "rgb(20,20,255)",
+  hitbox:      "rgb(255,20,20)",
+  takebox:     "rgb(20,255,255)",
+  grabbox:     "rgb(20,255,20)",
+  pushbox:     "rgb(255,0,255)",
+  triggerbox:  "rgb(255,128,0)",
+  boundingbox: "rgb(255,255,255)",
+};
 
 // ─── Texture cache ────────────────────────────────────────────────────────────
 const textureCache = new Map<string, HTMLImageElement>();
@@ -29,10 +42,12 @@ function getImage(name: string): HTMLImageElement | null {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function GameCanvas({ gameState }: GameCanvasProps) {
+export default function GameCanvas({ gameState, showBoxes = false }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef   = useRef<number>(0);
   const gsRef     = useRef<GameState | null>(null);
+  const showBoxesRef = useRef(showBoxes);
+  showBoxesRef.current = showBoxes;
 
   // Keep gsRef synced with incoming gameState prop
   useEffect(() => {
@@ -82,9 +97,18 @@ export default function GameCanvas({ gameState }: GameCanvasProps) {
     ctx.lineTo(cw, floorY);
     ctx.stroke();
 
-    // ── Draw characters ─────────────────────────────────────────────────────
-    drawChar(ctx, gs.player, scale, gx, gy);
-    drawChar(ctx, gs.cpu, scale, gx, gy);
+    // ── Draw all live objects (characters, projectiles, sparks) ────────────
+    const objects = gs.objects ?? [gs.player, gs.cpu];
+    for (const obj of objects) {
+      drawChar(ctx, obj, scale, gx, gy);
+    }
+
+    // ── Debug box overlay ───────────────────────────────────────────────────
+    if (showBoxesRef.current) {
+      for (const obj of objects) {
+        drawBoxes(ctx, obj, scale, gx, gy);
+      }
+    }
 
     // ── Health bars ─────────────────────────────────────────────────────────
     drawHealthBars(ctx, gs, cw, ch);
@@ -185,16 +209,54 @@ function drawChar(
 
   ctx.restore();
 
-  // Shadow (simple ellipse under character)
+  // Shadow (simple ellipse under character) — characters only
+  if (char.type === "character") {
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = "#000";
+    const shadowY = gy(0) + 2;
+    const shadowW = 80 * scale;
+    const shadowH = 12 * scale;
+    ctx.beginPath();
+    ctx.ellipse(gx(char.pos[0]), shadowY, shadowW / 2, shadowH / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ─── Debug box overlay (mirrors Python's draw_boxes) ──────────────────────────
+
+function drawBoxes(
+  ctx: CanvasRenderingContext2D,
+  char: CharState,
+  scale: number,
+  gx: (x: number) => number,
+  gy: (y: number) => number
+): void {
   ctx.save();
-  ctx.globalAlpha = 0.35;
-  ctx.fillStyle = "#000";
-  const shadowY = gy(0) + 2;
-  const shadowW = 80 * scale;
-  const shadowH = 12 * scale;
+  ctx.lineWidth = 2;
+
+  for (const boxType in char.boxes) {
+    const set = char.boxes[boxType] as BoxSet;
+    if (!set?.boxes?.length) continue;
+    ctx.strokeStyle = BOX_COLORS[boxType] ?? "#888";
+    for (const box of set.boxes) {
+      const [wx, wy, w, h] = worldBox(box, char);
+      // boxes are y-up: top of the rect is wy + h
+      ctx.strokeRect(gx(wx), gy(wy + h), w * scale, h * scale);
+    }
+  }
+
+  // Origin cross
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 1;
+  const cx = gx(char.pos[0]);
+  const cy = gy(char.pos[1]);
   ctx.beginPath();
-  ctx.ellipse(gx(char.pos[0]), shadowY, shadowW / 2, shadowH / 2, 0, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.moveTo(cx - 12, cy); ctx.lineTo(cx + 12, cy);
+  ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy + 12);
+  ctx.stroke();
+
   ctx.restore();
 }
 

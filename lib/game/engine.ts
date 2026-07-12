@@ -9,6 +9,64 @@ import type { CharState, CharData, FrameData, BoxSet, HitboxSet } from "./types"
 
 const DEFAULT_SUBSTATE: FrameData = { dur: 1 };
 
+// Mirrors Python's default_hitbox — values merged under a framedata hitbox
+export const DEFAULT_HITBOX = {
+  damage: [0, 0] as [number, number],
+  gain: [0, 0] as [number, number],
+  stamina: [0, 0] as [number, number],
+  hitstun: [0, 0] as [number, number],
+  hitstop: 10,
+  juggle: 1,
+  knockback: { grounded: [0, 0] as [number, number] },
+  hittype: ["medium", "middle"],
+};
+
+// Mirrors Python's attack_type_value
+export const ATTACK_TYPE_VALUE: Record<string, { scaling: number; min_scaling: number }> = {
+  parry: { scaling: 10, min_scaling: 0 },
+  block: { scaling: 10, min_scaling: 10 },
+  critical: { scaling: 10, min_scaling: 40 },
+  super: { scaling: 10, min_scaling: 36 },
+  special: { scaling: 10, min_scaling: 16 },
+  heavy: { scaling: 10, min_scaling: 14 },
+  medium: { scaling: 9, min_scaling: 12 },
+  light: { scaling: 8, min_scaling: 10 },
+  no_match: { scaling: 8, min_scaling: 40 },
+};
+
+// ─── Object registry (mirrors game.object_dict + deferred spawning) ──────────
+// createChar during a frame handler (create_object) pushes into spawnQueue;
+// the game tick drains it into the live object list.
+
+export const objectRegistry: {
+  dict: Record<string, CharData>;
+  spawnQueue: CharState[];
+} = { dict: {}, spawnQueue: [] };
+
+// Mirrors Python's dummy_json merge at load time: fill in fields that
+// projectile/particle JSONs (Hadouken, Sparks) omit.
+export function normalizeCharData(data: CharData): CharData {
+  data.type = data.type ?? "character";
+  data.gravity = data.gravity ?? 0;
+  data.gauges = data.gauges ?? {};
+  data.states = data.states ?? {};
+  data.timekill = data.timekill ?? false;
+  const boxDefaults: Record<string, BoxSet> = {
+    hurtbox: { boxes: [] },
+    hitbox: { boxes: [], hitset: 1 } as HitboxSet,
+    takebox: { boxes: [] },
+    grabbox: { boxes: [] },
+    pushbox: { boxes: [] },
+    triggerbox: { boxes: [] },
+    boundingbox: { boxes: [], grounded_friction: 0.7 } as BoxSet,
+  };
+  data.boxes = data.boxes ?? {};
+  for (const key in boxDefaults) {
+    data.boxes[key] = { ...boxDefaults[key], ...(data.boxes[key] ?? {}) };
+  }
+  return data;
+}
+
 // ─── Character factory ────────────────────────────────────────────────────────
 
 export function createChar(
@@ -34,6 +92,9 @@ export function createChar(
     data,
     name,
     team,
+    type: data.type ?? "character",
+    killed: false,
+    timekill: data.timekill ?? false,
     pos: [pos[0], pos[1], 0],
     speed: [0, 0],
     acceleration: [0, 0],
@@ -82,6 +143,9 @@ export function createChar(
 
   getState(char, { [initialState]: 2 }, true);
   nextFrame(char, data.states[char.currentState].framedata[0]);
+  // A "kill" key in the very first substate is a no-op in Python (the object
+  // isn't in object_list yet when remove() runs) — Sparks rely on this.
+  char.killed = false;
 
   return char;
 }
@@ -205,6 +269,16 @@ export function nextFrame(char: CharState, rawState: FrameData): void {
 type Handler = (char: CharState, value: unknown) => void;
 
 const FRAME_HANDLERS: Record<string, Handler> = {
+  // First, like Python's function_dict: remove a key from a box set,
+  // e.g. ["hitbox", "main_cancel"]
+  remove_box_key: (c, v) => {
+    const [boxName, key] = v as [string, string];
+    if (c.boxes[boxName]) {
+      const copy = { ...c.boxes[boxName] };
+      delete copy[key];
+      c.boxes[boxName] = copy as BoxSet;
+    }
+  },
   dur: (c, v) => {
     c.frame[1] = v as number;
   },
@@ -352,7 +426,49 @@ const FRAME_HANDLERS: Record<string, Handler> = {
   stop: (c, v) => {
     c.hitstop = v as number;
   },
-  // Deliberately skipped: voice, sound, camera_path, create_object, influence*, draw_shake, light, ambient, smear, hitset, damage, knockback, hitstop, hitstun, stamina, hit_bar_gain, hittype, juggle, wallbounce
+  // Throw puppeteering (mirrors object_influence_pos/_speed/_off_influence).
+  // The grabber repositions/launches the grabbed victim it holds a reference to.
+  // Python is y-down (`pos[1] - p[1]`); this engine is y-up, so we add.
+  influence_pos: (c, v) => {
+    if (!c.influenceObject) return;
+    const p = v as number[];
+    c.influenceObject.pos = [c.pos[0] + p[0] * c.face, c.pos[1] + p[1], 0];
+  },
+  influence_speed: (c, v) => {
+    if (!c.influenceObject) return;
+    const s = v as number[];
+    c.influenceObject.speed = [s[0] * c.face, s[1]];
+  },
+  off_influence: (c) => {
+    if (c.influenceObject) {
+      c.influenceObject.grabed = null;
+      c.influenceObject = null;
+    }
+  },
+  // Spawn projectiles/particles: [[dictName, [ox, oy], faceMul, initialState, palette?], ...]
+  create_object: (c, v) => {
+    const list = v as [string, [number, number], number, string, number?][];
+    for (const [ref, off, faceMul, initState] of list) {
+      const data = objectRegistry.dict[ref];
+      if (!data || !data.states[initState]) continue;
+      const spawned = createChar(
+        data,
+        ref,
+        [c.pos[0] + off[0] * c.face, c.pos[1] + off[1]],
+        c.face * faceMul,
+        c.team,
+        initState
+      );
+      spawned.selfMainObject = c.selfMainObject;
+      spawned.otherMainObject = c.otherMainObject;
+      objectRegistry.spawnQueue.push(spawned);
+    }
+  },
+  // Last, like Python's function_dict: mark object for removal
+  kill: (c) => {
+    c.killed = true;
+  },
+  // Deliberately skipped: voice, sound, camera_path, influence*, draw_shake, light, ambient, smear, hitset, damage, knockback, hitstop, hitstun, stamina, hit_bar_gain, hittype, juggle, wallbounce
 };
 
 // Process keys in a stable order matching the Python function_dict order
@@ -388,9 +504,9 @@ export function updateChar(char: CharState): void {
   if (!char.hitstop && char.grabed == null) {
     if (char.hitstun) char.hitstun -= 1;
 
-    // Auto face opponent
+    // Auto face opponent (characters only — projectiles keep their direction)
     const other = char.otherMainObject;
-    if (other && char.fet === "grounded") {
+    if (other && char.type === "character" && char.fet === "grounded") {
       const inNeutral =
         char.cancel.some(c => ["neutral", "turn", "kara"].includes(c as string)) || isFrameEnd;
       if (inNeutral && char.face !== roundSign(other.pos[0] - char.pos[0]) && Math.abs(other.pos[0] - char.pos[0]) > 32) {
@@ -411,7 +527,12 @@ export function updateChar(char: CharState): void {
       char.pos[2],
     ];
     if (char.fet === "airborne") {
-      char.speed[1] = char.speed[1] + char.data.gravity;
+      char.speed[1] = char.speed[1] + (char.data.gravity ?? 0);
+    }
+
+    // When I'm out of hitstun, the opponent's combo scaling resets (mirrors Python)
+    if (char.hitstun === 0 && char.otherMainObject) {
+      char.otherMainObject.damageScaling = [100, 100];
     }
 
     // Decay buffer state
@@ -465,16 +586,28 @@ export function updateChar(char: CharState): void {
   if (char.hitstop > 0) char.hitstop -= 1;
   if (char.kara > 0) char.kara -= 1;
 
-  // Trim currentCommand to avoid unbounded growth
-  if (char.currentCommand.length > 20) {
-    char.currentCommand = char.currentCommand.slice(-20);
+  // Commands live exactly one frame (mirrors Python's `self.current_command = []`
+  // at the end of update). Without this, stale "hurt"/"landing" tokens keep
+  // re-matching hit states and the defender loops in hit animations forever.
+  char.currentCommand = [];
+
+  // Auto-kill timer (projectiles/particles)
+  if (typeof char.timekill === "number") {
+    char.timekill -= 1;
+    if (char.timekill <= 0) char.killed = true;
   }
 
   // When animation ends and nothing is buffered, return to the idle state.
   // In Python the input device continuously sends "5" (neutral) which triggers Stand.
   // We replicate that here: when frame has ended and buffer is empty, queue Stand.
   const isNowFrameEnd = char.frame[0] <= 0 && char.frame[1] <= 0;
-  if (isNowFrameEnd && Object.keys(char.bufferState).length === 0 && char.data.states["Stand"]) {
+  if (
+    isNowFrameEnd &&
+    char.type === "character" &&
+    char.grabed == null &&
+    Object.keys(char.bufferState).length === 0 &&
+    char.data.states["Stand"]
+  ) {
     char.bufferState["Stand"] = 2;
     char.inputInterPress = true;
   }
@@ -488,99 +621,138 @@ export function updateChar(char: CharState): void {
 export function applyHit(
   attacker: CharState,
   defender: CharState,
-  hitbox: HitboxSet
+  rawHitbox: HitboxSet,
+  hitPoint: [number, number]
 ): void {
-  // Determine hit result type based on defender's current command
-  const defCmd = defender.currentCommand;
-  const isBlock = defCmd.includes("block");
-  const isParry = defCmd.includes("parry");
-  const hitResult = isParry ? "parry" : isBlock ? "block" : "hurt";
+  // Merge Python's default_hitbox under the actual hitbox values
+  const hitbox: HitboxSet = { ...DEFAULT_HITBOX, ...rawHitbox };
+  const attackerMain = attacker.selfMainObject ?? attacker;
+  const hittype = hitbox.hittype ?? ["medium", "middle"];
 
-  // Damage
-  const [dmgHit, dmgBlock] = hitbox.damage ?? [10, 5];
-  const scaling = Math.max(
-    attacker.damageScaling[0],
-    attacker.damageScaling[1]
-  ) / 100;
-  const damage = Math.ceil(Math.abs(
-    hitResult === "hurt" ? dmgHit * scaling
-    : hitResult === "block" ? dmgBlock * scaling
-    : 0
-  ));
+  // Blocking/parry are out of scope for now — every connect is a raw hit.
+
+  // Fresh hit on a non-stunned defender starts a new combo (mirrors Python)
+  if (!defender.hitstun) {
+    attackerMain.damageScaling = [100, 100];
+    attackerMain.combo = 0;
+    attackerMain.comboList = [];
+  }
+  attacker.damageScaling = attackerMain.damageScaling;
+
+  // Consume this hitbox (re-arms only when framedata defines a new hitbox)
+  (attacker.boxes["hitbox"] as HitboxSet).hitset = 0;
+
+  // Damage, scaled by the current combo scaling
+  const [dmgHit] = hitbox.damage ?? [0, 0];
+  const scaling = Math.max(attackerMain.damageScaling[0], attackerMain.damageScaling[1]) / 100;
+  const damage = Math.ceil(Math.abs(dmgHit * scaling));
   defender.gauges.health = Math.max(0, (defender.gauges.health ?? 0) - damage);
   defender.lastDamage = [
     defender.hitstun ? defender.lastDamage[0] + damage : damage,
     damage,
   ];
+  const isKO = (defender.gauges.health ?? 1) <= 0;
 
-  // Hitstun
-  const [stunHit, stunBlock] = hitbox.hitstun ?? [30, 0];
-  if (hitResult !== "parry") {
-    defender.hitstun = hitResult === "hurt" ? stunHit : stunBlock;
-  }
-
-  // Hitstop
-  const stop = hitbox.hitstop ?? 10;
-  if (hitResult !== "parry") {
-    attacker.hitstop = stop;
-    defender.hitstop = stop;
-  }
-
-  // Knockback
+  // Knockback — airborne variant when defender is airborne; KO always launches
   const kbDef = hitbox.knockback ?? { grounded: [14, 0] };
-  let kbSpeed: [number, number] = kbDef.grounded ?? [14, 0];
-  if (hitResult === "block") kbSpeed = kbDef.block ?? [kbSpeed[0], 0] as [number, number];
-  if (hitResult === "parry") kbSpeed = [0, 0];
+  let kbSpeed: [number, number] = [...(kbDef.grounded ?? [14, 0])] as [number, number];
+  if (defender.fet === "airborne" && kbDef.airborne) {
+    kbSpeed = [...kbDef.airborne] as [number, number];
+  }
+  const launch = kbSpeed[1] > 0 && defender.fet === "grounded";
   defender.speed = [kbSpeed[0] * attacker.face, kbSpeed[1]];
-  if (kbSpeed[1] > 0 && defender.fet === "grounded") {
+  defender.face = attackerMain.pos[0] > defender.pos[0] ? 1 : -1;
+  if (launch) {
     defender.fet = "airborne";
     defender.pos[1] += 10;
   }
-  defender.face = attacker.selfMainObject && attacker.selfMainObject.pos[0] > defender.pos[0] ? 1 : -1;
-
-  // Hittype / state transition for defender (mirrors Python's object_hit_hittype)
-  if (hitResult === "hurt") {
-    const hittype = hitbox.hittype ?? ["medium", "middle"];
-    // Add "hurt" + hittype to currentCommand so the command system selects the right
-    // hit animation (matches Python: other.current_command = ["hurt"] + hittype)
-    defender.bufferState = {};  // clear stale buffers (e.g. queued Stand)
-    defender.currentCommand = [...defender.currentCommand, "hurt", ...hittype];
-    if (defender.gauges.health != null && defender.gauges.health <= 0) {
-      defender.currentCommand.push("sidetummble");
-    }
-    defender.frame = [0, 0];
-    defender.cancel = [null];
-
-    // Use command system to select the correct hit state (same as Python's get_command flow)
-    getCommand(defender, defender.currentCommand);
-    const transitioned = getState(defender, defender.bufferState);
-    if (transitioned) nextFrameCurrent(defender);
+  if (isKO) {
+    defender.speed[1] = 20;
+    defender.fet = "airborne";
   }
 
-  // Reset hitbox hit state to prevent multi-hit in same attack
-  (attacker.boxes["hitbox"] as HitboxSet).hitset = 0;
+  // Hitstop for both
+  const stop = hitbox.hitstop ?? 10;
+  attacker.hitstop = stop;
+  defender.hitstop = stop;
 
-  // Damage scaling
-  const typeValue: Record<string, { scaling: number; min_scaling: number }> = {
-    super: { scaling: 10, min_scaling: 36 },
-    special: { scaling: 10, min_scaling: 16 },
-    heavy: { scaling: 10, min_scaling: 14 },
-    medium: { scaling: 9, min_scaling: 12 },
-    light: { scaling: 8, min_scaling: 10 },
-  };
-  const hittype = hitbox.hittype ?? ["medium"];
-  const typeName = Object.keys(typeValue).find(k => hittype.includes(k)) ?? "medium";
-  const tv = typeValue[typeName];
-  attacker.damageScaling = [
-    Math.max(tv.min_scaling, attacker.damageScaling[0] - tv.scaling),
+  // Hitstun
+  const [stunHit] = hitbox.hitstun ?? [30, 0];
+  defender.hitstun = stunHit;
+
+  // Juggle counter (airborne defenders can only take so many hits)
+  if (defender.fet === "airborne") {
+    defender.juggle -= hitbox.juggle ?? 1;
+  }
+
+  // Wallbounce
+  if (rawHitbox.wallbounce != null) defender.wallbounce = true;
+
+  // Attacker gets its on-hit cancel options (e.g. jab → jab chains, special cancels)
+  if (rawHitbox.cancel != null) {
+    const val = rawHitbox.cancel as string | string[];
+    attacker.cancel = Array.isArray(val) ? val : [val];
+  }
+  if (rawHitbox.main_cancel != null && attacker.selfMainObject) {
+    const val = rawHitbox.main_cancel as string | string[];
+    attacker.selfMainObject.cancel = Array.isArray(val) ? val : [val];
+  }
+
+  // Defender transitions into the matching hit state via the command system
+  // (mirrors Python: other.current_command = ["hurt"] + hittype)
+  defender.bufferState = {};
+  defender.currentCommand = ["hurt", ...hittype];
+  if (isKO) defender.currentCommand.push("sidetummble");
+  defender.frame = [0, 0];
+  defender.cancel = [null];
+  getCommand(defender, defender.currentCommand);
+  const transitioned = getState(defender, defender.bufferState);
+  if (transitioned) nextFrameCurrent(defender);
+
+  // Combo bookkeeping + damage scaling decay for follow-ups
+  attackerMain.combo += 1;
+  attackerMain.comboList.push(`${attacker.data.name} ${attacker.currentState}`);
+  const typeName = Object.keys(ATTACK_TYPE_VALUE).find(k => hittype.includes(k)) ?? "medium";
+  const tv = ATTACK_TYPE_VALUE[typeName];
+  attackerMain.damageScaling = [
+    Math.max(tv.min_scaling, attackerMain.damageScaling[0] - tv.scaling),
     tv.min_scaling,
   ];
+
+  // Hit spark particle at the point of contact
+  const sparkData = objectRegistry.dict["SF3/Sparks"];
+  if (sparkData && sparkData.states[typeName]) {
+    const spark = createChar(sparkData, "SF3/Sparks", hitPoint, attacker.face, attacker.team, typeName);
+    spark.selfMainObject = attacker.selfMainObject;
+    spark.otherMainObject = attacker.otherMainObject;
+    objectRegistry.spawnQueue.push(spark);
+  }
+
+  // Hitbox-triggered spawns (e.g. fireball death spark) and projectile death
+  if (rawHitbox.create_object != null) {
+    FRAME_HANDLERS["create_object"](attacker, rawHitbox.create_object);
+  }
+  if (rawHitbox.kill != null) attacker.killed = true;
 }
 
-function nextFrameCurrent(char: CharState): void {
+export function nextFrameCurrent(char: CharState): void {
   const fd = char.data.states[char.currentState].framedata;
   const idx = char.frame[0];
   if (idx > 0 && idx <= fd.length) {
     nextFrame(char, fd[fd.length - idx]);
   }
+}
+
+// Instantly switch a character into a state (mirrors object_trigger_state).
+// Use this from collision resolution — NOT the `trigg_state` frame handler, which
+// adds +1 to compensate for the outer nextFrame decrement it runs inside of.
+export function triggerState(char: CharState, stateName: string): void {
+  const sd = char.data.states[stateName];
+  if (!sd) return;
+  char.currentState = stateName;
+  char.currentCommand = [];
+  char.bufferState = {};
+  char.boxes = { ...char.data.boxes };
+  char.frame = [sd.framedata.length, 0];
+  nextFrame(char, sd.framedata[0]);
 }

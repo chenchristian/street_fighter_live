@@ -97,7 +97,7 @@ export interface CharData {
   gravity: number;
   mass: number;
   terminal_velocity: number;
-  timekill: boolean;
+  timekill: boolean | number;
   scale: number;
   gauges: Record<string, GaugeDef>;
   boxes: Record<string, BoxSet | HitboxSet>;
@@ -112,6 +112,9 @@ export interface CharState {
   data: CharData;
   name: string;
   team: number;
+  type: string;              // "character" | "projectile" | "particle"
+  killed: boolean;           // marked for removal from the object list
+  timekill: boolean | number; // frames until auto-kill (false = never)
 
   // Physics
   pos: [number, number, number];
@@ -179,8 +182,11 @@ export type GamePhase = "playing" | "ko" | "victory";
 export interface GameState {
   player: CharState;
   cpu: CharState;
+  // All live objects: characters, projectiles, hit sparks. player/cpu are members.
+  objects: CharState[];
   phase: GamePhase;
   frameCount: number;
   winner: "player" | "cpu" | null;
   roundTimer: number;   // frames remaining
+  koTimer: number;      // frames the sim keeps running after KO so the fall plays out
 }

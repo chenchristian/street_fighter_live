@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useRef, useCallback, useState } from "react";
 import type { CharData, CharState, GameState } from "@/lib/game/types";
-import { createChar, updateChar } from "@/lib/game/engine";
-import { applyBoundingBox, applyPushCollision, applyHitCollision } from "@/lib/game/collision";
+import { createChar, updateChar, normalizeCharData, objectRegistry } from "@/lib/game/engine";
+import { runCollisions } from "@/lib/game/collision";
 import { CV_TO_STATE, updateCpuInput } from "@/lib/game/cpu";
 import type { PredictionState } from "./usePosePipeline";
 
@@ -29,7 +29,7 @@ export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMo
 
   const gameRef = useRef<GameState | null>(null);
   const stageRef = useRef<CharState | null>(null);
-  const rafRef = useRef<number>(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevLabelRef = useRef<string>("idle");
   const cpuModeRef = useRef<CpuMode>(cpuMode);
   cpuModeRef.current = cpuMode;
@@ -39,11 +39,18 @@ export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMo
   const start = useCallback(async () => {
     setStatus("loading");
     try {
-      const [ryuData, kenData, trainingData] = await Promise.all([
+      const [ryuData, kenData, trainingData, hadoukenData, sparksData] = await Promise.all([
         loadCharData("/assets/objects/SF3/Ryu.json"),
         loadCharData("/assets/objects/SF3/Ken.json"),
         loadStageData("/assets/objects/Training.json"),
-      ]);
+        loadCharData("/assets/objects/SF3/Hadouken.json"),
+        loadCharData("/assets/objects/SF3/Sparks.json"),
+      ].map(p => p.then(normalizeCharData)));
+
+      // Register spawnable objects (create_object refs these by name)
+      objectRegistry.dict["SF3/Hadouken"] = hadoukenData;
+      objectRegistry.dict["SF3/Sparks"] = sparksData;
+      objectRegistry.spawnQueue.length = 0;
 
       // Create player (Ryu on left, facing right)
       const player = createChar(ryuData, "Ryu Reencor Style", [-300, 0], 1, 1, "Stand");
@@ -63,37 +70,59 @@ export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMo
       const gs: GameState = {
         player,
         cpu,
+        objects: [player, cpu],
         phase: "playing",
         frameCount: 0,
         winner: null,
         roundTimer: ROUND_TIMER_FRAMES,
+        koTimer: 0,
       };
 
       gameRef.current = gs;
       setGameState({ ...gs });
       setStatus("ready");
 
-      // Game loop at 60fps via rAF
-      let lastTime = 0;
-      const FRAME_MS = 1000 / 60;
+      // Dev aids: poke the live game / step it synchronously from the console.
+      // Stripped from production builds.
+      if (process.env.NODE_ENV !== "production") {
+        (window as unknown as { __game?: GameState }).__game = gs;
+        (window as unknown as { __step?: (n?: number) => void }).__step = (n = 1) => {
+          const g = gameRef.current;
+          const stg = stageRef.current;
+          if (!g || !stg) return;
+          for (let i = 0; i < n && (g.phase === "playing" || g.koTimer > 0); i++) {
+            tick(g, stg, cpuModeRef.current);
+          }
+          setGameState({ ...g });
+        };
+      }
 
-      const loop = (now: number) => {
-        rafRef.current = requestAnimationFrame(loop);
-        const elapsed = now - lastTime;
-        if (elapsed < FRAME_MS - 1) return;   // skip if too soon
-        lastTime = now;
+      // Fixed-step 60fps simulation on setInterval (rAF stops in hidden tabs,
+      // which would freeze the whole game — rendering still uses rAF).
+      const STEP_MS = 1000 / 60;
+      let last = performance.now();
+      let acc = 0;
+
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(() => {
+        const now = performance.now();
+        acc += now - last;
+        last = now;
+        if (acc > 250) acc = 250;  // cap catch-up after tab sleep
 
         const g = gameRef.current;
         const stg = stageRef.current;
-        if (!g || !stg || g.phase !== "playing") return;
+        if (!g || !stg || (g.phase !== "playing" && g.koTimer <= 0)) { acc = 0; return; }
 
-        tick(g, stg, cpuModeRef.current);
-
+        let stepped = false;
+        while (acc >= STEP_MS) {
+          tick(g, stg, cpuModeRef.current);
+          acc -= STEP_MS;
+          stepped = true;
+        }
         // Shallow copy to trigger React re-render for health bars etc.
-        setGameState({ ...g });
-      };
-
-      rafRef.current = requestAnimationFrame(loop);
+        if (stepped) setGameState({ ...g });
+      }, STEP_MS / 2);
     } catch (e) {
       setStatus("error");
       setErrorMsg(e instanceof Error ? e.message : "Unknown error");
@@ -135,7 +164,9 @@ export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMo
   }, [prediction]);
 
   // Cleanup
-  useEffect(() => () => { cancelAnimationFrame(rafRef.current); }, []);
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+  }, []);
 
   return { status, errorMsg, gameState, start, activeMove };
 }
@@ -144,25 +175,50 @@ export function useGameEngine(prediction: PredictionState | null, cpuMode: CpuMo
 
 function tick(g: GameState, stage: CharState, cpuMode: CpuMode): void {
   g.frameCount++;
-  g.roundTimer = Math.max(0, g.roundTimer - 1);
 
-  // CPU AI
-  if (cpuMode === "random") updateCpuInput(g.cpu, g.player);
+  if (g.phase === "playing") {
+    g.roundTimer = Math.max(0, g.roundTimer - 1);
+    // CPU AI
+    if (cpuMode === "random") updateCpuInput(g.cpu, g.player);
+  }
 
-  // Update both characters
-  updateChar(g.player);
-  updateChar(g.cpu);
+  // Update every live object (characters, projectiles, sparks)
+  for (const obj of g.objects) updateChar(obj);
 
-  // Apply stage collision
-  applyBoundingBox(g.player, stage);
-  applyBoundingBox(g.cpu, stage);
+  // Bring in objects spawned this frame (fireballs, hit sparks)
+  if (objectRegistry.spawnQueue.length) {
+    for (const s of objectRegistry.spawnQueue) {
+      if (!s.selfMainObject) s.selfMainObject = s.team === g.player.team ? g.player : g.cpu;
+      if (!s.otherMainObject) s.otherMainObject = s.team === g.player.team ? g.cpu : g.player;
+      g.objects.push(s);
+    }
+    objectRegistry.spawnQueue.length = 0;
+  }
 
-  // Pushbox (character vs character)
-  applyPushCollision(g.player, g.cpu);
+  // Collision pass: hits → push → stage bounds (matches Python order)
+  runCollisions(g.objects, stage);
 
-  // Hitbox vs hurtbox
-  applyHitCollision(g.player, g.cpu);
-  applyHitCollision(g.cpu, g.player);
+  // Kill projectiles that flew far offscreen
+  const stageBB = stage.boxes["boundingbox"];
+  if (stageBB?.boxes.length) {
+    const [sx, , sw] = stageBB.boxes[0];
+    for (const o of g.objects) {
+      if (o.type === "projectile" && (o.pos[0] < sx - 600 || o.pos[0] > sx + sw + 600)) {
+        o.killed = true;
+      }
+    }
+  }
+
+  // Reap killed objects
+  if (g.objects.some(o => o.killed)) {
+    g.objects = g.objects.filter(o => !o.killed);
+  }
+
+  // After KO: keep simulating so the knockdown plays out, then freeze
+  if (g.phase !== "playing") {
+    g.koTimer = Math.max(0, g.koTimer - 1);
+    return;
+  }
 
   // Win condition
   const playerDead = (g.player.gauges.health ?? 1) <= 0;
@@ -171,6 +227,7 @@ function tick(g: GameState, stage: CharState, cpuMode: CpuMode): void {
 
   if (playerDead || cpuDead || timeOut) {
     g.phase = "ko";
+    g.koTimer = 180;  // let the fall/landing animation play out (~3s)
     if (playerDead && !cpuDead) g.winner = "cpu";
     else if (cpuDead && !playerDead) g.winner = "player";
     else if (timeOut) {
