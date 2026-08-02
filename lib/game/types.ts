@@ -2,6 +2,8 @@
 // Types mirroring the Python game engine's JSON character data + runtime state
 // ──────────────────────────────────────────────────────────────────────────────
 
+import type { InputDevice } from "./input";
+
 // ─── JSON data types (loaded from /assets/objects/*.json) ────────────────────
 
 export interface BoxSet {
@@ -13,9 +15,13 @@ export interface BoxSet {
 
 export interface HitboxSet extends BoxSet {
   hitset?: number;
+  /** [damage on hit, damage on block]. Parry always deals 0. */
   damage?: [number, number];
-  gain?: [number, number];
+  /** [[self on hit, self on block], [other on hit, other on block]] super meter. */
+  hit_bar_gain?: [[number, number], [number, number]];
+  gain?: [[number, number], [number, number]];
   stamina?: [number, number];
+  /** [hitstun, blockstun] in frames. */
   hitstun?: [number, number];
   hitstop?: number;
   juggle?: number;
@@ -149,7 +155,8 @@ export interface CharState {
   combo: number;
   comboList: unknown[];
   parry: [string, number];
-  guard: string;
+  /** Guard property of the current frame's hurtbox, e.g. ["middle", "block"]. */
+  guard: string[];
 
   // Gauges (health, super, stamina)
   gauges: Record<string, number>;
@@ -172,12 +179,22 @@ export interface CharState {
   selfMainObject: CharState | null;
   otherMainObject: CharState | null;
 
-  // Input (set externally each frame)
-  inputCurrentInput: Set<string>;
+  // Input (set externally each frame). Ordered like Python's current_input list:
+  // index 0 is always the facing-relative dpad token.
+  inputCurrentInput: string[];
   inputInterPress: boolean;
+  /** Input source driving this character. Null for projectiles and particles. */
+  device: InputDevice | null;
 }
 
-export type GamePhase = "playing" | "ko" | "victory";
+export type GamePhase = "intro" | "playing" | "roundEnd" | "matchEnd";
+
+/** Combo display state — a running hit count that expires shortly after it ends. */
+export interface ComboState {
+  count: number;
+  owner: "player" | "cpu";
+  timer: number;
+}
 
 export interface GameState {
   player: CharState;
@@ -186,7 +203,14 @@ export interface GameState {
   objects: CharState[];
   phase: GamePhase;
   frameCount: number;
+  /** Frames left in the current non-playing phase (intro, round end, match end). */
+  phaseTimer: number;
+  roundTimer: number;   // frames remaining in the round
+  round: number;        // 1-based
+  roundsWon: [number, number];  // [player, cpu]
+  roundWinner: "player" | "cpu" | null;
   winner: "player" | "cpu" | null;
-  roundTimer: number;   // frames remaining
-  koTimer: number;      // frames the sim keeps running after KO so the fall plays out
+  /** Big centred announcer text, e.g. "ROUND 1", "FIGHT!", "KO!". */
+  announcer: string;
+  combo: ComboState | null;
 }

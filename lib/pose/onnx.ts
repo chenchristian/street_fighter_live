@@ -5,8 +5,12 @@ let cachedSession: InferenceSession | null = null;
 export async function loadOnnxSession(modelUrl: string): Promise<InferenceSession> {
   if (cachedSession) return cachedSession;
   const ort = await import("onnxruntime-web");
-  // Use CDN for WASM binaries so we don't bundle them
-  ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
+  // WASM binaries come from the CDN so they aren't bundled — but they MUST match
+  // the installed JS glue exactly or the runtime fails to instantiate. Pin the
+  // URL to the version actually loaded rather than a hard-coded one that silently
+  // drifts on every upgrade (this was pinned to 1.22.0 against a 1.27.0 install).
+  const version = ort.env.versions.web;
+  ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${version}/dist/`;
   cachedSession = await ort.InferenceSession.create(modelUrl);
   return cachedSession;
 }

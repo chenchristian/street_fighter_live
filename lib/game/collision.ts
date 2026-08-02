@@ -8,6 +8,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import type { CharState, BoxSet, HitboxSet } from "./types";
+import type { GuardResult } from "./engine";
 import { applyHit, getCommand, getState, nextFrameCurrent, triggerState } from "./engine";
 
 // Basic AABB test
@@ -91,7 +92,7 @@ export function applyBoundingBox(char: CharState, stage: CharState): void {
       char.currentCommand = [...char.currentCommand, "landing"];
       // Landing states are picked by the command system: "landing" + the state
       // we landed in (getCommand includes currentState in its state list).
-      getCommand(char, [...char.currentCommand, ...Array.from(char.inputCurrentInput)]);
+      getCommand(char, [...char.currentCommand, ...char.inputCurrentInput]);
       const got = getState(char, char.bufferState);
       if (got) nextFrameCurrent(char);
     }
@@ -255,9 +256,64 @@ export function applyHitCollision(attacker: CharState, defender: CharState): voi
     for (const hurt of hurtbox.boxes) {
       const [ux, uy, uw, uh] = worldBox(hurt, defender);
       if (boxCollide(hx, hy, hw, hh, ux, uy, uw, uh)) {
-        applyHit(attacker, defender, hitbox, [hx + hw / 2, hy + hh / 2]);
+        const guard = resolveGuard(defender, hitbox);
+        applyHit(attacker, defender, hitbox, [hx + hw / 2, hy + hh / 2], guard);
         return;
       }
     }
   }
+}
+
+// ─── Guard resolution — port of the block/parry branch in Box_Collitions.py ───
+//
+// Attack heights: "high" and "middle" are blocked standing, "low" and "middle"
+// crouching. Guessing wrong means eating the hit — that mixup is the whole
+// point of an overhead vs. a sweep.
+
+// Tokens on a frame's `cancel` that leave the defender free to guard.
+// Python spells this "interruption" but every character JSON uses "interrupt";
+// accept both so the intended frames actually qualify.
+const GUARD_OPEN = ["neutral", "interrupt", "interruption", "blocking"];
+const PARRY_OPEN = [...GUARD_OPEN, "parry"];
+
+export function resolveGuard(defender: CharState, hitbox: HitboxSet): GuardResult {
+  const hittype = hitbox.hittype ?? ["medium", "middle"];
+  const hits = (...heights: string[]) => heights.some(h => hittype.includes(h));
+  const cancelOpen = (toks: string[]) => defender.cancel.some(c => toks.includes(c as string));
+  const dpad = defender.inputCurrentInput[0];
+  const guard = defender.guard ?? [];
+  const [parryDir, parryTimer] = defender.parry;
+
+  // ── Parry first: it beats blocking when both would apply ──
+  // The window is 24 frames but only its first 8 (timer >= 16) actually parry;
+  // a dedicated parry state (guard contains "parry") always succeeds.
+  if (cancelOpen(PARRY_OPEN)) {
+    const armed = parryTimer > 0;
+    const inWindow = parryTimer >= 16 || guard.includes("parry");
+    if ((armed && parryDir === "6") || guard.includes("parry")) {
+      if (hits("high", "middle") && inWindow) {
+        defender.parry[1] = 0;
+        return { kind: "parry", stance: "stand" };
+      }
+    }
+    if ((armed && parryDir === "3") || guard.includes("parry")) {
+      if (hits("low", "middle") && inWindow) {
+        defender.parry[1] = 0;
+        return { kind: "parry", stance: "crouch" };
+      }
+    }
+  }
+
+  // ── Block: holding back ("4") stands, down-back ("1") crouches ──
+  if (cancelOpen(GUARD_OPEN) && defender.fet === "grounded") {
+    const blocking = guard.includes("block");
+    if ((dpad === "4" || blocking) && hits("high", "middle")) {
+      return { kind: "block", stance: "stand" };
+    }
+    if ((dpad === "1" || blocking) && hits("low", "middle")) {
+      return { kind: "block", stance: "crouch" };
+    }
+  }
+
+  return { kind: "hurt", stance: null };
 }

@@ -103,7 +103,7 @@ export default function GamePage() {
   const {
     status: gameStatus, errorMsg: gameErr,
     gameState, start: startGame, activeMove,
-  } = useGameEngine(prediction, cpuMode);
+  } = useGameEngine(prediction, { cpuMode, keyboardEnabled: true });
 
   const isPoseReady = poseStatus === "ready";
   const isGameReady = gameStatus === "ready";

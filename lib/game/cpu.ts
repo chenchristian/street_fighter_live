@@ -1,70 +1,313 @@
-"use client";
-// Simple CPU AI — randomly picks moves, weighted toward attacks when close
-import type { CharState } from "./types";
+// ──────────────────────────────────────────────────────────────────────────────
+// CPU AI.
+//
+// The AI holds a virtual controller — it produces RawInput and nothing else.
+// It cannot write bufferState or force a state, so it is bound by exactly the
+// same frame data, cancel windows and motion inputs as a human player. If the
+// CPU lands a Shoryuken it is because it actually performed a dragon-punch
+// motion and the command system matched it.
+// ──────────────────────────────────────────────────────────────────────────────
 
-// CV label → buffer-state name (Ryu.json state names)
-export const CV_TO_STATE: Record<string, string> = {
-  jab:                     "Stand Jab",
-  cross:                   "Stand Strong",
-  lead_hook:               "Stand Fierce",
-  rear_hook:               "Crouch Strong",
-  uppercut:                "Crouch Fierce",
-  jumping_cross:           "Front Jump",
-  rear_low_kick:           "Stand Short",
-  side_kick:               "Stand Forward",
-  spinning_back_high_kick: "Stand Roundhouse",
-  crouching_low_sweep:     "Crouch Roundhouse",
-  grab:                    "Grab",
-  hadouken:                "Hadouken Jab",     // animation plays; no projectile (create_object not yet implemented)
-  shoryuken:               "Shoryuken Jab",
+import type { CharState } from "./types";
+import { BTN, emptyRawInput, type RawInput } from "./input";
+import type { Rng } from "./rng";
+
+export type Difficulty = "easy" | "medium" | "hard";
+
+export interface CpuConfig {
+  /** Frames between the world changing and the AI being allowed to react. */
+  reactionFrames: number;
+  /** Probability of choosing to block an incoming attack it has reacted to. */
+  blockChance: number;
+  /** Bias toward closing distance and attacking rather than spacing. */
+  aggression: number;
+  /** Probability of following a landed normal with another attack. */
+  comboChance: number;
+  /** Probability of taking a special-move branch when one is available. */
+  specialChance: number;
+}
+
+export const DIFFICULTIES: Record<Difficulty, CpuConfig> = {
+  easy:   { reactionFrames: 24, blockChance: 0.25, aggression: 0.35, comboChance: 0.10, specialChance: 0.15 },
+  medium: { reactionFrames: 14, blockChance: 0.55, aggression: 0.55, comboChance: 0.35, specialChance: 0.30 },
+  hard:   { reactionFrames: 6,  blockChance: 0.85, aggression: 0.75, comboChance: 0.60, specialChance: 0.50 },
 };
 
-// CPU state pool weighted by distance
-const CPU_IDLE_STATES = ["Stand", "Walk Forward", "Walk Backward", "Crouch"];
-const CPU_ATTACK_STATES = [
-  "Stand Jab", "Stand Short", "Stand Strong", "Stand Fierce",
-  "Crouch Jab", "Crouch Short",
+// ─── Action scripts ───────────────────────────────────────────────────────────
+// A step is one frame's worth of intent, held for `frames` frames. Directions
+// are facing-relative here (+1 x = toward the opponent) and converted to
+// screen-absolute on the way out, because that is what InputDevice expects.
+
+interface Step {
+  dir?: [number, number];
+  buttons?: number[];
+  frames: number;
+}
+
+type Script = Step[];
+
+const HOLD = (frames: number, dir?: [number, number]): Step => ({ dir, frames });
+const PRESS = (buttons: number[], dir?: [number, number]): Script => [
+  { buttons, dir, frames: 3 },
+  { frames: 1 },
 ];
-const CPU_TIMER_IDLE = 60;    // frames between CPU decisions when idle
-const CPU_TIMER_ATTACK = 30;  // frames between decisions when close
-const CPU_TIMER_SPECIAL = 45; // longer commitment after a special
 
-let cpuTimer = 0;
+// Motions are performed as real directional inputs; InputDevice's history
+// buffer detects them exactly as it would for a human.
+const QCF: Step[] = [
+  { dir: [0, -1], frames: 3 },
+  { dir: [1, -1], frames: 3 },
+  { dir: [1, 0], frames: 2 },
+];
+const DP: Step[] = [
+  { dir: [1, 0], frames: 3 },
+  { dir: [0, -1], frames: 3 },
+  { dir: [1, -1], frames: 2 },
+];
 
-export function updateCpuInput(cpu: CharState, player: CharState): void {
-  cpuTimer--;
-  if (cpuTimer > 0) return;
+const SCRIPTS: Record<string, Script> = {
+  // Normals
+  jab:        PRESS([BTN.LP]),
+  strong:     PRESS([BTN.MP]),
+  fierce:     PRESS([BTN.HP]),
+  short:      PRESS([BTN.LK]),
+  forward:    PRESS([BTN.MK]),
+  roundhouse: PRESS([BTN.HK]),
+  crouchJab:  PRESS([BTN.LP], [0, -1]),
+  crouchShort:PRESS([BTN.LK], [0, -1]),
+  sweep:      PRESS([BTN.HK], [0, -1]),
 
-  const dist = Math.abs(cpu.pos[0] - player.pos[0]);
-  const isClose = dist < 250;
+  // Specials
+  hadouken:  [...QCF, { buttons: [BTN.LP], dir: [1, 0], frames: 3 }, { frames: 2 }],
+  shoryuken: [...DP,  { buttons: [BTN.LP], dir: [1, 0], frames: 3 }, { frames: 2 }],
+  tatsumaki: [
+    { dir: [0, -1], frames: 3 },
+    { dir: [-1, -1], frames: 3 },
+    { dir: [-1, 0], frames: 2 },
+    { buttons: [BTN.LK], dir: [-1, 0], frames: 3 },
+    { frames: 2 },
+  ],
 
-  let stateName: string;
+  // Movement / defence
+  walkIn:    [HOLD(14, [1, 0])],
+  walkOut:   [HOLD(14, [-1, 0])],
+  blockHigh: [HOLD(20, [-1, 0])],
+  blockLow:  [HOLD(20, [-1, -1])],
+  crouch:    [HOLD(16, [0, -1])],
+  jumpIn:    [HOLD(3, [1, 1]), HOLD(28, [1, 0])],
+  idle:      [HOLD(10)],
+};
 
-  // From full-screen, occasionally throw a fireball to zone the player.
-  if (dist > 550 && Math.random() < 0.4) {
-    stateName = "Hadouken Jab";
-    cpuTimer = CPU_TIMER_SPECIAL;
-  } else if (isClose && Math.random() < 0.15) {
-    // Up close, sometimes go for the Shoryuken (launcher) as a reversal.
-    stateName = "Shoryuken Jab";
-    cpuTimer = CPU_TIMER_SPECIAL;
-  } else if (isClose && Math.random() < 0.6) {
-    stateName = CPU_ATTACK_STATES[Math.floor(Math.random() * CPU_ATTACK_STATES.length)];
-    cpuTimer = CPU_TIMER_ATTACK;
-  } else if (dist > 300) {
-    // Move toward player if far (auto-face already orients toward opponent)
-    stateName = "Walk Forward";
-    cpuTimer = CPU_TIMER_IDLE;
-  } else {
-    stateName = CPU_IDLE_STATES[Math.floor(Math.random() * CPU_IDLE_STATES.length)];
-    cpuTimer = CPU_TIMER_IDLE;
+// ─── Ranges (game units) ─────────────────────────────────────────────────────
+const RANGE_CLOSE = 220;   // inside sweep/throw range
+const RANGE_MID   = 420;   // inside longest normal
+const RANGE_FAR   = 700;   // fireball territory
+
+type CpuState = "neutral" | "approach" | "retreat" | "attack" | "defend";
+
+/** One delayed observation of the opponent, so the AI reacts late like a human. */
+interface Observation {
+  state: string;
+  attacking: boolean;
+  airborne: boolean;
+  dist: number;
+  hitstun: number;
+}
+
+export class CpuController {
+  private config: CpuConfig;
+  private state: CpuState = "neutral";
+  /** Remaining frames of the currently-running script. */
+  private script: Script = [];
+  private stepIndex = 0;
+  private stepFrames = 0;
+  /** Frames until the next decision is allowed. */
+  private thinkTimer = 0;
+  /** Ring of observations, read `reactionFrames` behind the present. */
+  private observations: Observation[] = [];
+
+  constructor(difficulty: Difficulty = "medium") {
+    this.config = DIFFICULTIES[difficulty];
   }
 
-  // Fall back to a basic poke if this character lacks the chosen special.
-  if (!cpu.data.states[stateName]) stateName = "Stand Jab";
+  setDifficulty(difficulty: Difficulty): void {
+    this.config = DIFFICULTIES[difficulty];
+  }
 
-  if (cpu.data.states[stateName]) {
-    cpu.bufferState[stateName] = 8;
-    cpu.inputInterPress = true;
+  reset(): void {
+    this.state = "neutral";
+    this.script = [];
+    this.stepIndex = 0;
+    this.stepFrames = 0;
+    this.thinkTimer = 0;
+    this.observations = [];
+  }
+
+  /** Produce this frame's raw input. Called once per tick, before updateChar. */
+  update(cpu: CharState, player: CharState, rng: Rng): RawInput {
+    this.observe(cpu, player);
+
+    // A running script is committed to — that's what gives the AI a readable,
+    // punishable rhythm instead of twitching between decisions every frame.
+    if (this.script.length > 0) return this.advanceScript(cpu);
+
+    if (this.thinkTimer > 0) {
+      this.thinkTimer--;
+      return emptyRawInput();
+    }
+
+    this.decide(cpu, player, rng);
+    return this.script.length > 0 ? this.advanceScript(cpu) : emptyRawInput();
+  }
+
+  // ── Delayed perception ──
+  private observe(cpu: CharState, player: CharState): void {
+    const hitbox = player.boxes["hitbox"];
+    this.observations.push({
+      state: player.currentState,
+      attacking: !!hitbox?.boxes?.length,
+      airborne: player.fet === "airborne",
+      dist: Math.abs(cpu.pos[0] - player.pos[0]),
+      hitstun: player.hitstun,
+    });
+    // Keep only what the reaction window needs.
+    while (this.observations.length > this.config.reactionFrames + 1) {
+      this.observations.shift();
+    }
+  }
+
+  /** The world as the AI currently believes it to be — `reactionFrames` stale. */
+  private perceived(): Observation | null {
+    if (this.observations.length <= this.config.reactionFrames) return null;
+    return this.observations[0];
+  }
+
+  // ── Decision tree ──
+  private decide(cpu: CharState, player: CharState, rng: Rng): void {
+    const obs = this.perceived();
+    const dist = Math.abs(cpu.pos[0] - player.pos[0]);
+    const cfg = this.config;
+
+    // Can't act at all — don't burn a decision on it.
+    if (cpu.hitstun > 0 || cpu.fet === "airborne") {
+      this.thinkTimer = 2;
+      return;
+    }
+
+    // 1. Defend: react to a committed attack we can still see coming.
+    if (obs?.attacking && dist < RANGE_MID && rng.chance(cfg.blockChance)) {
+      this.state = "defend";
+      // Crouch-blocking beats more of the normal set, so favour it slightly.
+      this.run(rng.chance(0.6) ? "blockLow" : "blockHigh");
+      return;
+    }
+
+    // 2. Punish: opponent is in hitstun or recovering — take the free hit.
+    if (obs && obs.hitstun > 4 && dist < RANGE_CLOSE) {
+      this.state = "attack";
+      this.run(
+        rng.weighted([
+          ["fierce", 3],
+          ["shoryuken", cfg.specialChance * 6],
+          ["sweep", 2],
+          ["strong", 2],
+        ])
+      );
+      return;
+    }
+
+    // 3. Range-appropriate offence.
+    if (dist < RANGE_CLOSE) {
+      this.state = "attack";
+      this.run(
+        rng.weighted([
+          ["jab", 3],
+          ["crouchJab", 2],
+          ["crouchShort", 2],
+          ["strong", 2],
+          ["sweep", 2],
+          ["shoryuken", cfg.specialChance * 4],
+          ["walkOut", 3 * (1 - cfg.aggression)],
+          ["blockLow", 2 * (1 - cfg.aggression)],
+        ])
+      );
+      return;
+    }
+
+    if (dist < RANGE_MID) {
+      this.state = rng.chance(cfg.aggression) ? "approach" : "neutral";
+      this.run(
+        rng.weighted([
+          ["walkIn", 4 * cfg.aggression],
+          ["forward", 3],
+          ["roundhouse", 2],
+          ["tatsumaki", cfg.specialChance * 2],
+          ["walkOut", 2 * (1 - cfg.aggression)],
+          ["crouch", 1],
+        ])
+      );
+      return;
+    }
+
+    if (dist < RANGE_FAR) {
+      this.state = "approach";
+      this.run(
+        rng.weighted([
+          ["walkIn", 5 * cfg.aggression],
+          ["hadouken", cfg.specialChance * 4],
+          ["walkOut", 1],
+          ["idle", 1],
+        ])
+      );
+      return;
+    }
+
+    // Full screen: zone with fireballs or close the gap.
+    this.state = "approach";
+    this.run(
+      rng.weighted([
+        ["hadouken", cfg.specialChance * 8],
+        ["walkIn", 5],
+        ["jumpIn", 1.5 * cfg.aggression],
+        ["idle", 1],
+      ])
+    );
+  }
+
+  private run(name: string): void {
+    const script = SCRIPTS[name];
+    if (!script) return;
+    this.script = script;
+    this.stepIndex = 0;
+    this.stepFrames = script[0]?.frames ?? 0;
+    // A short gap after every action, so the AI has recognisable recovery.
+    this.thinkTimer = 4;
+  }
+
+  private advanceScript(cpu: CharState): RawInput {
+    const step = this.script[this.stepIndex];
+    if (!step) {
+      this.script = [];
+      return emptyRawInput();
+    }
+
+    const raw = emptyRawInput();
+    if (step.dir) {
+      // Facing-relative → screen-absolute, since InputDevice re-applies facing.
+      raw.dir[0] = step.dir[0] * (cpu.face >= 0 ? 1 : -1);
+      raw.dir[1] = step.dir[1];
+    }
+    for (const b of step.buttons ?? []) raw.buttons[b] = true;
+
+    this.stepFrames--;
+    if (this.stepFrames <= 0) {
+      this.stepIndex++;
+      if (this.stepIndex >= this.script.length) {
+        this.script = [];
+      } else {
+        this.stepFrames = this.script[this.stepIndex].frames;
+      }
+    }
+    return raw;
   }
 }

@@ -4,6 +4,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import type { CharState, CharData, FrameData, BoxSet, HitboxSet } from "./types";
+import { gameRng } from "./rng";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -12,7 +13,6 @@ const DEFAULT_SUBSTATE: FrameData = { dur: 1 };
 // Mirrors Python's default_hitbox — values merged under a framedata hitbox
 export const DEFAULT_HITBOX = {
   damage: [0, 0] as [number, number],
-  gain: [0, 0] as [number, number],
   stamina: [0, 0] as [number, number],
   hitstun: [0, 0] as [number, number],
   hitstop: 10,
@@ -123,7 +123,7 @@ export function createChar(
     combo: 0,
     comboList: [],
     parry: ["", 0],
-    guard: "",
+    guard: [],
     gauges,
     boxes: { ...data.boxes },
     image: "reencor/none",
@@ -137,8 +137,9 @@ export function createChar(
     drawTextures: [],
     selfMainObject: null,
     otherMainObject: null,
-    inputCurrentInput: new Set(),
+    inputCurrentInput: ["5"],
     inputInterPress: false,
+    device: null,
   };
 
   getState(char, { [initialState]: 2 }, true);
@@ -205,17 +206,29 @@ export function getState(
     const cancelList: (string | number | null)[] = (sd.cancel as (string | number | null)[] | undefined) ?? [null];
     const stateReq = sd.state ?? "grounded";
     const isFrameEnd = char.frame[0] <= 0 && char.frame[1] <= 0;
-    const canCancel =
-      (isFrameEnd && (cancelList as unknown[]).includes("neutral")) ||
-      (char.kara && (cancelList as unknown[]).includes("kara") && !(char.data.states[char.currentState].cancel as unknown[] | undefined)?.includes("kara")) ||
-      char.cancel.some(c => (cancelList as unknown[]).includes(c));
+    const cl = cancelList as unknown[];
     const notBlacklisted = !(sd.no_cancel_states ?? []).includes(char.currentState);
+
+    // Precedence matters and is easy to get wrong. Python reads:
+    //   (frame == [0,0] and "neutral" in cancel)
+    //   or ((kara-clause or cancel-intersection) and current_state not in no_cancel_states)
+    // because `and` binds tighter than `or`. So no_cancel_states gates ONLY the
+    // cancel branch: a state whose animation has fully ended may always restart
+    // itself. That is exactly how the idle and walk loops work — their
+    // no_cancel_states lists name themselves, to stop a *cancel* into the state
+    // they are already in, not to stop the animation looping.
+    const fromNeutral = isFrameEnd && cl.includes("neutral");
+    const karaCancel =
+      !!char.kara &&
+      cl.includes("kara") &&
+      !(char.data.states[char.currentState].cancel as unknown[] | undefined)?.includes("kara");
+    const cancelInto = char.cancel.some(c => cl.includes(c));
+    const canCancel = fromNeutral || ((karaCancel || cancelInto) && notBlacklisted);
     const hasMeter = (char.gauges.super ?? 0) >= (sd.bar_use ?? 0);
 
-    if (force || (stateReq.includes(char.fet) && canCancel && notBlacklisted && hasMeter)) {
+    if (force || (stateReq.includes(char.fet) && canCancel && hasMeter)) {
       if (sd.bar_use) char.gauges.super = (char.gauges.super ?? 0) - sd.bar_use;
       char.currentState = move;
-      char.currentCommand = [];  // reset so stale tokens (e.g. "hurt") don't re-trigger this state next frame
       char.boxes = { ...char.data.boxes };
       char.frame = [sd.framedata.length, 0];
       char.kara = 2;
@@ -405,7 +418,8 @@ const FRAME_HANDLERS: Record<string, Handler> = {
     const options = v as Record<string, { chance: number }>;
     const entries = Object.entries(options);
     const total = entries.reduce((s, [, o]) => s + o.chance, 0);
-    let r = Math.random() * total;
+    // Seeded, not Math.random — see rng.ts. Unseeded draws desync online play.
+    let r = gameRng.next() * total;
     for (const [name, opt] of entries) {
       r -= opt.chance;
       if (r <= 0 && c.data.states[name]) {
@@ -481,6 +495,25 @@ function roundSign(n: number): number {
 }
 
 export function updateChar(char: CharState): void {
+  // Parry window: tapping toward the opponent ("6") or down-forward ("3") arms
+  // a 24-frame window during which a matching attack is parried instead of
+  // blocked. The dpad token is already facing-relative, so no face term here.
+  const dpad = char.inputCurrentInput[0];
+  if (
+    (dpad === "6" || dpad === "3") &&
+    char.inputInterPress &&
+    char.parry[1] === 0
+  ) {
+    char.parry = [dpad, 24];
+  }
+  if (char.parry[1] > 0) char.parry[1] -= 1;
+
+  // Guard property of the current frame's hurtbox, e.g. ["middle", "block"] on
+  // a blocking frame or ["middle", "parry"] on a parry frame. Drives automatic
+  // guarding in the hit resolution.
+  const hb = char.boxes["hurtbox"] as (BoxSet & { guard?: string[] }) | undefined;
+  char.guard = hb?.guard ?? [];
+
   // Clamp gauges
   for (const g in char.gauges) {
     const def = char.data.gauges[g];
@@ -543,21 +576,25 @@ export function updateChar(char: CharState): void {
     char.bufferState = nextBuffer;
   }
 
-  // Gather input
-  const canReadInput =
-    char.inputInterPress ||
-    isFrameEnd ||
-    !char.cancel.every(c => c === null) ||
-    char.kara;
-  if (canReadInput) {
-    char.currentCommand = [...char.currentCommand, ...Array.from(char.inputCurrentInput)];
+  // `cancel` holds the tokens this frame may be cancelled into; a bare [null]
+  // means "not cancellable". Python tests `not set(cancel).intersection([None])`
+  // — i.e. no null present at all — which is stricter than "not every entry is
+  // null", so a frame like ["neutral", null] stays uncancellable.
+  const cancellable = !char.cancel.includes(null);
+
+  // Gather input. Characters (Active_Objects.update) read input on any frame
+  // they could act on, not just on a press or at the end of an animation —
+  // without the cancellable/kara terms a motion input like QCF, which lands on
+  // a frame with no button press, never reaches the command timers at all.
+  if (char.inputInterPress || isFrameEnd || cancellable || char.kara > 0) {
+    char.currentCommand = [...char.currentCommand, ...char.inputCurrentInput];
     getCommand(char, char.currentCommand);
   }
 
-  // Try to transition to a new state
+  // Try to transition to a new state.
   const canTransition =
     ((char.inputInterPress || Object.keys(char.bufferState).length > 0) &&
-      !char.cancel.every(c => c === null) &&
+      (cancellable || char.kara > 0) &&
       (char.hitstop === 0 || (char.hitstop > 0 && char.ignoreStop))) ||
     isFrameEnd;
   if (canTransition) {
@@ -572,10 +609,16 @@ export function updateChar(char: CharState): void {
 
   if (char.frame[1] <= 0) {
     const framedata = char.data.states[char.currentState].framedata;
-    const idx = char.frame[0]; // still pre-decrement value
-    if (idx > 0 && idx <= framedata.length) {
-      nextFrame(char, framedata[framedata.length - idx]);
-    }
+    // Python indexes framedata[-frame[0]] unconditionally and lets next_frame's
+    // own `frame[0] <= 0` guard clamp frame back to [0, 0]. Skipping the call
+    // when frame[0] is 0 (as this port used to) means the clamp never runs and
+    // frame[1] free-runs negative forever — the character sticks on its last
+    // animation frame and every `frame == [0,0]` test silently stops matching.
+    const idx = char.frame[0];
+    const entry = idx > 0 && idx <= framedata.length
+      ? framedata[framedata.length - idx]
+      : framedata[0];
+    nextFrame(char, entry);
   }
 
   // Continuous speed
@@ -597,20 +640,10 @@ export function updateChar(char: CharState): void {
     if (char.timekill <= 0) char.killed = true;
   }
 
-  // When animation ends and nothing is buffered, return to the idle state.
-  // In Python the input device continuously sends "5" (neutral) which triggers Stand.
-  // We replicate that here: when frame has ended and buffer is empty, queue Stand.
-  const isNowFrameEnd = char.frame[0] <= 0 && char.frame[1] <= 0;
-  if (
-    isNowFrameEnd &&
-    char.type === "character" &&
-    char.grabed == null &&
-    Object.keys(char.bufferState).length === 0 &&
-    char.data.states["Stand"]
-  ) {
-    char.bufferState["Stand"] = 2;
-    char.inputInterPress = true;
-  }
+  // No idle fallback here on purpose. The input device emits "5" (neutral)
+  // every frame, which matches Stand's command gate and buffers it naturally —
+  // same as Python. Forcing Stand from the engine masked the real defect and
+  // stomped on states that legitimately end without returning to idle.
 
   // Clear inter_press flag
   char.inputInterPress = false;
@@ -618,20 +651,28 @@ export function updateChar(char: CharState): void {
 
 // ─── Damage application (called from collision system) ───────────────────────
 
+/** How the defender met the attack. Mirrors Python's `type` list. */
+export interface GuardResult {
+  kind: "hurt" | "block" | "parry";
+  stance: "stand" | "crouch" | null;
+}
+
 export function applyHit(
   attacker: CharState,
   defender: CharState,
   rawHitbox: HitboxSet,
-  hitPoint: [number, number]
+  hitPoint: [number, number],
+  guard: GuardResult = { kind: "hurt", stance: null }
 ): void {
   // Merge Python's default_hitbox under the actual hitbox values
   const hitbox: HitboxSet = { ...DEFAULT_HITBOX, ...rawHitbox };
   const attackerMain = attacker.selfMainObject ?? attacker;
   const hittype = hitbox.hittype ?? ["medium", "middle"];
+  const { kind } = guard;
+  const isHit = kind === "hurt";
+  const isParry = kind === "parry";
 
-  // Blocking/parry are out of scope for now — every connect is a raw hit.
-
-  // Fresh hit on a non-stunned defender starts a new combo (mirrors Python)
+  // A fresh hit on a non-stunned defender starts a new combo (mirrors Python)
   if (!defender.hitstun) {
     attackerMain.damageScaling = [100, 100];
     attackerMain.combo = 0;
@@ -642,10 +683,11 @@ export function applyHit(
   // Consume this hitbox (re-arms only when framedata defines a new hitbox)
   (attacker.boxes["hitbox"] as HitboxSet).hitset = 0;
 
-  // Damage, scaled by the current combo scaling
-  const [dmgHit] = hitbox.damage ?? [0, 0];
+  // ── Damage: [onHit, onBlock], zero on parry, scaled by combo scaling ──
+  const dmgPair = hitbox.damage ?? [0, 0];
+  const rawDamage = isParry ? 0 : isHit ? dmgPair[0] : (dmgPair[1] ?? 0);
   const scaling = Math.max(attackerMain.damageScaling[0], attackerMain.damageScaling[1]) / 100;
-  const damage = Math.ceil(Math.abs(dmgHit * scaling));
+  const damage = Math.ceil(Math.abs(rawDamage * scaling));
   defender.gauges.health = Math.max(0, (defender.gauges.health ?? 0) - damage);
   defender.lastDamage = [
     defender.hitstun ? defender.lastDamage[0] + damage : damage,
@@ -653,42 +695,68 @@ export function applyHit(
   ];
   const isKO = (defender.gauges.health ?? 1) <= 0;
 
-  // Knockback — airborne variant when defender is airborne; KO always launches
-  const kbDef = hitbox.knockback ?? { grounded: [14, 0] };
-  let kbSpeed: [number, number] = [...(kbDef.grounded ?? [14, 0])] as [number, number];
-  if (defender.fet === "airborne" && kbDef.airborne) {
-    kbSpeed = [...kbDef.airborne] as [number, number];
-  }
-  const launch = kbSpeed[1] > 0 && defender.fet === "grounded";
-  defender.speed = [kbSpeed[0] * attacker.face, kbSpeed[1]];
-  defender.face = attackerMain.pos[0] > defender.pos[0] ? 1 : -1;
-  if (launch) {
-    defender.fet = "airborne";
-    defender.pos[1] += 10;
-  }
-  if (isKO) {
-    defender.speed[1] = 20;
-    defender.fet = "airborne";
+  // ── Super meter: hit_bar_gain is [[selfHit, selfBlock], [otherHit, otherBlock]] ──
+  const gainDef = (rawHitbox.hit_bar_gain ?? rawHitbox.gain) as
+    | [[number, number], [number, number]]
+    | undefined;
+  if (gainDef && Array.isArray(gainDef[0]) && Array.isArray(gainDef[1])) {
+    const idx = isHit ? 0 : 1;
+    if (attackerMain.gauges.super != null) {
+      attackerMain.gauges.super += isParry ? 0 : (gainDef[0][idx] ?? 0);
+    }
+    if (defender.gauges.super != null) {
+      // Parrying is rewarded with a flat 8 meter, as in Python.
+      defender.gauges.super += isParry ? 8 : (gainDef[1][idx] ?? 0);
+    }
   }
 
-  // Hitstop for both
-  const stop = hitbox.hitstop ?? 10;
+  // ── Stun meter ──
+  const stamPair = hitbox.stamina ?? [0, 0];
+  if (defender.gauges.stamina != null) {
+    defender.gauges.stamina += isParry ? 0 : isHit ? stamPair[0] : (stamPair[1] ?? 0);
+  }
+
+  // ── Knockback ──
+  // A parry leaves the defender planted; a block only pushes them back along
+  // the ground — never launches, however vertical the hit's knockback is.
+  if (!isParry) {
+    const kbDef = hitbox.knockback ?? { grounded: [14, 0] };
+    let kbSpeed: [number, number] = [...(kbDef.grounded ?? [14, 0])] as [number, number];
+    if (defender.fet === "airborne" && kbDef.airborne) {
+      kbSpeed = [...kbDef.airborne] as [number, number];
+    }
+    if (!isHit) kbSpeed = [Math.abs(kbSpeed[0]) * 0.5, 0];
+
+    const launch = isHit && kbSpeed[1] > 0 && defender.fet === "grounded";
+    defender.speed = [kbSpeed[0] * attacker.face, kbSpeed[1]];
+    defender.face = attackerMain.pos[0] > defender.pos[0] ? 1 : -1;
+    if (launch) {
+      defender.fet = "airborne";
+      defender.pos[1] += 10;
+    }
+    if (isKO) {
+      defender.speed[1] = 20;
+      defender.fet = "airborne";
+    }
+  }
+
+  // ── Hitstop: a parry freezes both fighters for a fixed 16 frames ──
+  const stop = isParry ? 16 : (hitbox.hitstop ?? 10);
   attacker.hitstop = stop;
   defender.hitstop = stop;
 
-  // Hitstun
-  const [stunHit] = hitbox.hitstun ?? [30, 0];
-  defender.hitstun = stunHit;
+  // ── Hitstun / blockstun: [onHit, onBlock], zero on parry ──
+  const stunPair = hitbox.hitstun ?? [30, 0];
+  defender.hitstun = isParry ? 0 : isHit ? stunPair[0] : (stunPair[1] ?? 0);
 
   // Juggle counter (airborne defenders can only take so many hits)
-  if (defender.fet === "airborne") {
+  if (isHit && defender.fet === "airborne") {
     defender.juggle -= hitbox.juggle ?? 1;
   }
 
-  // Wallbounce
-  if (rawHitbox.wallbounce != null) defender.wallbounce = true;
+  if (isHit && rawHitbox.wallbounce != null) defender.wallbounce = true;
 
-  // Attacker gets its on-hit cancel options (e.g. jab → jab chains, special cancels)
+  // Attacker gets its on-hit cancel options (jab → jab chains, special cancels)
   if (rawHitbox.cancel != null) {
     const val = rawHitbox.cancel as string | string[];
     attacker.cancel = Array.isArray(val) ? val : [val];
@@ -698,10 +766,12 @@ export function applyHit(
     attacker.selfMainObject.cancel = Array.isArray(val) ? val : [val];
   }
 
-  // Defender transitions into the matching hit state via the command system
-  // (mirrors Python: other.current_command = ["hurt"] + hittype)
+  // ── Defender transitions via the command system ──
+  // Python builds `type + hittype`, e.g. ["block","stand","light","middle"],
+  // which is exactly what Stand Block's gate [["block","stand"]] matches.
+  const typeTokens = guard.stance ? [kind, guard.stance] : [kind];
   defender.bufferState = {};
-  defender.currentCommand = ["hurt", ...hittype];
+  defender.currentCommand = [...typeTokens, ...hittype];
   if (isKO) defender.currentCommand.push("sidetummble");
   defender.frame = [0, 0];
   defender.cancel = [null];
@@ -709,20 +779,33 @@ export function applyHit(
   const transitioned = getState(defender, defender.bufferState);
   if (transitioned) nextFrameCurrent(defender);
 
-  // Combo bookkeeping + damage scaling decay for follow-ups
-  attackerMain.combo += 1;
-  attackerMain.comboList.push(`${attacker.data.name} ${attacker.currentState}`);
-  const typeName = Object.keys(ATTACK_TYPE_VALUE).find(k => hittype.includes(k)) ?? "medium";
-  const tv = ATTACK_TYPE_VALUE[typeName];
-  attackerMain.damageScaling = [
-    Math.max(tv.min_scaling, attackerMain.damageScaling[0] - tv.scaling),
-    tv.min_scaling,
+  // Tell the attacker's own framedata how the attack landed, so on-hit-only
+  // cancel routes can gate on it.
+  attacker.currentCommand = [
+    ...attacker.currentCommand,
+    isParry ? "parried" : isHit ? "hited" : "blocked",
   ];
 
-  // Hit spark particle at the point of contact
+  // ── Combo bookkeeping — blocked and parried attacks don't extend a combo ──
+  const attackClass = Object.keys(ATTACK_TYPE_VALUE).find(k => hittype.includes(k)) ?? "medium";
+  if (isHit) {
+    attackerMain.combo += 1;
+    attackerMain.comboList.push(`${attacker.data.name} ${attacker.currentState}`);
+    const tv = ATTACK_TYPE_VALUE[attackClass];
+    attackerMain.damageScaling = [
+      Math.max(tv.min_scaling, attackerMain.damageScaling[0] - tv.scaling),
+      tv.min_scaling,
+    ];
+  }
+
+  // ── Hit spark at the point of contact ──
+  // Python picks the first attack_type_value key present in the defender's
+  // command, so a block/parry shows its own spark rather than the hit spark.
+  const sparkState =
+    Object.keys(ATTACK_TYPE_VALUE).find(k => defender.currentCommand.includes(k)) ?? attackClass;
   const sparkData = objectRegistry.dict["SF3/Sparks"];
-  if (sparkData && sparkData.states[typeName]) {
-    const spark = createChar(sparkData, "SF3/Sparks", hitPoint, attacker.face, attacker.team, typeName);
+  if (sparkData && sparkData.states[sparkState]) {
+    const spark = createChar(sparkData, "SF3/Sparks", hitPoint, attacker.face, attacker.team, sparkState);
     spark.selfMainObject = attacker.selfMainObject;
     spark.otherMainObject = attacker.otherMainObject;
     objectRegistry.spawnQueue.push(spark);
