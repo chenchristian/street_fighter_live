@@ -10,6 +10,7 @@ import { gameRng } from "@/lib/game/rng";
 import { FixedClock } from "@/lib/game/clock";
 import { saveSnapshot, restoreSnapshot, checksum, type GameSnapshot } from "@/lib/net/snapshot";
 import { decodeInput } from "@/lib/net/protocol";
+import { preloadFrom, spriteStats } from "@/lib/render/textures";
 import type { PredictionState } from "./usePosePipeline";
 
 async function loadCharData(url: string): Promise<CharData> {
@@ -38,6 +39,8 @@ export function useGameEngine(
   const [errorMsg, setErrorMsg] = useState("");
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [activeMove, setActiveMove] = useState<string | null>(null);
+  /** Sprite preload progress, 0..1. */
+  const [loadProgress, setLoadProgress] = useState(0);
 
   const gameRef = useRef<GameState | null>(null);
   const stageRef = useRef<CharState | null>(null);
@@ -80,6 +83,14 @@ export function useGameEngine(
       objectRegistry.dict["SF3/Hadouken"] = hadoukenData;
       objectRegistry.dict["SF3/Sparks"] = sparksData;
 
+      // Preload every sprite these characters can reach before the match starts.
+      // Loading them lazily meant each new move's frames were undrawable the
+      // first time they appeared, which read as the fighter blinking out.
+      await preloadFrom(
+        [ryuData, kenData, hadoukenData, sparksData, trainingData],
+        (loaded, total) => setLoadProgress(total ? loaded / total : 1)
+      );
+
       const stage = createChar(trainingData, "stage", [0, 0], 1, 0, "Stand");
       stageRef.current = stage;
 
@@ -117,6 +128,7 @@ export function useGameEngine(
             if (gameRef.current) restoreSnapshot(gameRef.current, s);
           },
           __checksum: () => (gameRef.current ? checksum(gameRef.current) : 0),
+          __spriteStats: spriteStats,
           __tickRaw: (p1 = 0, p2 = 0) => {
             const g = gameRef.current;
             const stg = stageRef.current;
@@ -182,5 +194,5 @@ export function useGameEngine(
     return () => clock.stop();
   }, []);
 
-  return { status, errorMsg, gameState, start, activeMove };
+  return { status, errorMsg, gameState, start, activeMove, loadProgress };
 }

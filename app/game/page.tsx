@@ -33,7 +33,7 @@ export default function GamePage() {
   } = usePosePipeline();
 
   const {
-    status: gameStatus, errorMsg: gameErr, gameState, start: startGame,
+    status: gameStatus, errorMsg: gameErr, gameState, start: startGame, loadProgress,
   } = useGameEngine(prediction, { cpuMode, difficulty, keyboardEnabled });
 
   const handleStart = useCallback(() => {
@@ -105,10 +105,10 @@ export default function GamePage() {
 
   const status = useMemo(() => {
     if (!started) return null;
-    if (gameStatus === "loading") return "LOADING ASSETS";
+    if (gameStatus === "loading") return `LOADING SPRITES\n${Math.round(loadProgress * 100)}%`;
     if (gameStatus === "error") return `*ERROR\n${(gameErr || "").toUpperCase()}`;
     return null;
-  }, [started, gameStatus, gameErr]);
+  }, [started, gameStatus, gameErr, loadProgress]);
 
   return (
     <GameShell

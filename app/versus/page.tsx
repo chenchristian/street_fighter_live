@@ -24,7 +24,7 @@ export default function VersusPage() {
     errorMsg: poseErr, stats, camAspect, start: startPose,
   } = usePosePipeline();
 
-  const { gameState, net, host, join } = useNetplay(prediction, true);
+  const { gameState, net, host, join, loadProgress } = useNetplay(prediction, true);
 
   const launch = useCallback(() => {
     if (isHosting) {
@@ -114,7 +114,7 @@ export default function VersusPage() {
       case "waiting":
         return `SHARE THIS CODE\n*${net.roomCode}\nWAITING FOR OPPONENT`;
       case "connected":
-        return "CONNECTED\nSTARTING MATCH";
+        return `CONNECTED\nLOADING SPRITES ${Math.round(loadProgress * 100)}%`;
       case "closed":
         return "OPPONENT DISCONNECTED";
       case "error":
@@ -122,7 +122,7 @@ export default function VersusPage() {
       default:
         return "STARTING";
     }
-  }, [launched, gameState, net.status, net.roomCode, net.detail]);
+  }, [launched, gameState, net.status, net.roomCode, net.detail, loadProgress]);
 
   return (
     <GameShell

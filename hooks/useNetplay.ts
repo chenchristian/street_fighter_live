@@ -12,6 +12,7 @@ import { CvSource, KeyboardSource } from "@/lib/game/sources";
 import { encodeInput, makeRoomCode, type NetMessage } from "@/lib/net/protocol";
 import { PeerLink, suggestInputDelay, type ConnectionStatus } from "@/lib/net/peer";
 import { NetplaySession } from "@/lib/net/session";
+import { preloadFrom } from "@/lib/render/textures";
 import type { PredictionState } from "./usePosePipeline";
 
 async function loadCharData(url: string): Promise<CharData> {
@@ -37,6 +38,8 @@ export interface NetplayState {
 
 export function useNetplay(prediction: PredictionState | null, keyboardEnabled = true) {
   const [gameState, setGameState] = useState<GameState | null>(null);
+  /** Sprite preload progress, 0..1. */
+  const [loadProgress, setLoadProgress] = useState(0);
   const [net, setNet] = useState<NetplayState>({
     status: "idle", detail: "", roomCode: "", isHost: false,
     rtt: 0, inputDelay: 3, rollbacks: 0, stalls: 0, desynced: false,
@@ -136,6 +139,13 @@ export function useNetplay(prediction: PredictionState | null, keyboardEnabled =
       objectRegistry.dict["SF3/Hadouken"] = hadouken;
       objectRegistry.dict["SF3/Sparks"] = sparks;
 
+      // Same preload as the single-player path — a sprite that pops in mid-match
+      // is worse online, where both peers are already fighting the clock.
+      await preloadFrom(
+        [ryu, ken, hadouken, sparks, training],
+        (loaded, total) => setLoadProgress(total ? loaded / total : 1)
+      );
+
       const stage = createChar(training, "stage", [0, 0], 1, 0, "Stand");
       stageRef.current = stage;
 
@@ -225,5 +235,5 @@ export function useNetplay(prediction: PredictionState | null, keyboardEnabled =
     };
   }, []);
 
-  return { gameState, net, host, join };
+  return { gameState, net, host, join, loadProgress };
 }

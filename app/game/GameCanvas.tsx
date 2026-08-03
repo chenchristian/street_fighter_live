@@ -13,6 +13,7 @@ import type { GameState, CharState, BoxSet } from "@/lib/game/types";
 import { worldBox } from "@/lib/game/collision";
 import { buildStage, drawStage, type Stage } from "@/lib/render/stage";
 import { drawText, textWidth, rgba } from "@/lib/render/font";
+import { getImage, noteHeldPrevious } from "@/lib/render/textures";
 import { INK } from "@/lib/render/palette";
 
 export const GAME_W = 384;
@@ -65,18 +66,19 @@ interface GameCanvasProps {
   status?: string | null;
 }
 
-// ─── Texture cache ────────────────────────────────────────────────────────────
-const textureCache = new Map<string, HTMLImageElement>();
+// ─── Sprites ──────────────────────────────────────────────────────────────────
+// Cache and preloading live in lib/render/textures.ts.
 
-function getImage(name: string): HTMLImageElement | null {
-  let img = textureCache.get(name);
-  if (!img) {
-    img = new Image();
-    img.src = `/assets/images/${name}.png`;
-    textureCache.set(name, img);
-  }
-  return img.complete && img.naturalWidth > 0 ? img : null;
-}
+/**
+ * Last sprite each object was successfully drawn with.
+ *
+ * A PNG that hasn't finished decoding cannot be drawn, and drawing nothing
+ * makes the character blink out of existence for those frames. Showing the
+ * previous frame instead is invisible to the player — animation frames are
+ * adjacent poses — and it degrades a missing sprite into a one-frame stutter
+ * rather than a hole. Keyed weakly so dead projectiles don't pin their sprites.
+ */
+const lastDrawn = new WeakMap<CharState, HTMLImageElement>();
 
 // ─── Camera ───────────────────────────────────────────────────────────────────
 
@@ -254,9 +256,17 @@ function drawChar(
   const [tr, tg, tb, ta] = char.imageTint;
   const isTinted = tr !== 255 || tg !== 255 || tb !== 255 || ta !== 255;
 
-  if (img) {
-    if (isTinted) drawTinted(ctx, img, drawX, drawY, sw, sh, tr, tg, tb, ta / 255);
-    else ctx.drawImage(img, Math.round(drawX), Math.round(drawY), Math.round(sw), Math.round(sh));
+  // Fall back to the last sprite this object drew rather than drawing nothing.
+  let toDraw = img;
+  if (!toDraw) {
+    toDraw = lastDrawn.get(char) ?? null;
+    if (toDraw) noteHeldPrevious();
+  }
+
+  if (toDraw) {
+    if (isTinted) drawTinted(ctx, toDraw, drawX, drawY, sw, sh, tr, tg, tb, ta / 255);
+    else ctx.drawImage(toDraw, Math.round(drawX), Math.round(drawY), Math.round(sw), Math.round(sh));
+    if (img) lastDrawn.set(char, img);
   }
   ctx.restore();
 }
@@ -370,16 +380,18 @@ function drawHud(ctx: CanvasRenderingContext2D, gs: GameState): void {
     });
   }
 
-  if (gs.announcer) drawAnnouncer(ctx, gs.announcer);
-
+  // At match end the result supersedes the round announcer — drawing both put
+  // "KO!" and "YOU LOSE" on top of each other.
   if (gs.phase === "matchEnd") {
     const msg = gs.winner === "player" ? "YOU WIN" : "YOU LOSE";
-    drawText(ctx, msg, GAME_W / 2, 122, {
+    drawText(ctx, msg, GAME_W / 2, 96, {
       colour: gs.winner === "player" ? INK.ok : INK.blood,
       outline: INK.black,
       scale: 3,
       align: "center",
     });
+  } else if (gs.announcer) {
+    drawAnnouncer(ctx, gs.announcer);
   }
 }
 
