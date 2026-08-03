@@ -1,32 +1,241 @@
 @import "tailwindcss";
 
+/* ── Colour tokens — UI_SHELL_SPEC §7 ─────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink:   #0b0a10;   /* panel base       */
+  --sand:  #d9b779;
+  --gold:  #ffcc44;   /* headings, accent */
+  --blood: #c8323c;   /* error / danger   */
+  --steel: #6d7ea8;   /* secondary text   */
+  --paper: #f4e7cd;   /* body text        */
+  --border: #2a2438;
+  --field: #14111f;
+  --field-border: #241f36;
+  --muted: #5c557a;
+  --ok: #7de08a;
+  color-scheme: dark;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ── Page: a dark room with a faint warm glow behind the cabinet ──────────── */
+html, body {
+  height: 100%;
+  background: #07060a;
+  color: var(--paper);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  overflow: hidden;
+  -webkit-font-smoothing: none;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+body::before {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  background: radial-gradient(ellipse at 50% 42%, #2a2136 0%, #100d18 45%, #07060a 75%);
+  z-index: -1;
+}
+
+/* ── Shell layout — §2 ────────────────────────────────────────────────────── */
+#app {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 10px;
+  position: relative;
+}
+
+#cv-panel {
+  /* Fixed, NOT shrinkable: the canvas is sized in JS, so flexbox treats it as a
+     large rigid item and will squeeze a shrinkable sidebar to its minimum even
+     when there is plenty of room. */
+  flex: 0 0 300px;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 10px;
+  background: rgba(10, 8, 16, .82);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 18px 50px -18px #000;
+}
+#cv-panel[hidden] { display: none; }
+
+#stage-frame {
+  position: relative;
+  line-height: 0;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  box-shadow:
+    0 0 0 1px #000,
+    0 24px 60px -12px rgba(0, 0, 0, .9),
+    0 0 90px -20px rgba(255, 190, 90, .18);
+}
+
+#game {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  /* CSS width/height are set from JS. Never set them here. */
+}
+
+/* Narrow windows stack instead of squeezing. */
+@media (max-width: 780px) {
+  html, body { overflow: auto; }
+  #app {
+    flex-direction: column-reverse;   /* game on top, panel below */
+    justify-content: flex-end;
+    height: auto;
+    min-height: 100%;
   }
+  #cv-panel { flex: 0 0 auto; width: min(100%, 360px); max-height: none; }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ── CV sidebar — §4 ──────────────────────────────────────────────────────── */
+#cv-panel h3 {
+  font-size: 9px;
+  font-weight: normal;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--steel);
+  margin: 12px 0 5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+#cv-panel h3 em {
+  font-style: normal;
+  font-size: 8px;
+  color: var(--muted);
+  letter-spacing: .1em;
 }
 
-@keyframes fadeOut {
-  0%   { opacity: 1; transform: scale(1.1); }
-  20%  { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(0.95); }
+#cv-panel canvas {
+  display: block;
+  width: 100%;
+  image-rendering: pixelated;
+  background: var(--field);
+  border: 1px solid var(--field-border);
+  border-radius: 2px;
 }
+
+.cv-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  letter-spacing: .08em;
+  color: var(--steel);
+  margin-top: 6px;
+  padding: 0 1px;
+}
+.cv-stats .cv-body { color: var(--blood); }
+.cv-stats .cv-body.ok { color: var(--ok); }
+
+.cv-legend {
+  font-size: 9px;
+  line-height: 1.5;
+  letter-spacing: .02em;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+#cam-dock {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;      /* replaced at runtime by the real camera ratio */
+  border: 1px solid #3a3350;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #000;
+  line-height: 0;
+}
+#cam-dock video,
+#cam-dock #cam-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  transform: scaleX(-1);    /* mirror for the player only */
+}
+
+/* CRITICAL: the generic `#cv-panel canvas` rule above also matches the skeleton
+   overlay. Left alone it paints an opaque plate over the camera feed — the
+   symptom is a skeleton floating on black while the video "isn't working".
+   Two IDs so specificity wins. */
+#cam-dock #cam-overlay {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  z-index: 1;
+}
+
+#cam-readout {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 5px;
+  font-size: 11px;
+  line-height: 1.4;
+  background: rgba(0, 0, 0, .72);
+  color: var(--gold);
+  letter-spacing: .06em;
+  z-index: 2;
+}
+#cam-readout span:last-child { color: var(--steel); }
+
+/* ── Shared chrome ────────────────────────────────────────────────────────── */
+.shell-topbar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 9px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  z-index: 3;
+  pointer-events: none;
+}
+.shell-topbar > * { pointer-events: auto; }
+.shell-topbar a:hover { color: var(--steel); }
+
+.shell-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+.shell-toggle input { accent-color: var(--blood); }
+
+/* ── Landing page ─────────────────────────────────────────────────────────── */
+.menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--gold);
+  color: var(--gold);
+  background: transparent;
+  padding: 14px 34px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  transition: background-color .12s, color .12s;
+}
+.menu-btn:hover { background: var(--gold); color: #07060a; }
+.menu-btn.secondary { border-color: var(--border); color: var(--steel); }
+.menu-btn.secondary:hover { border-color: var(--gold); background: transparent; color: var(--gold); }
+
+.net-row {
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  letter-spacing: .08em;
+}
+.net-row .k { width: 84px; flex: 0 0 auto; color: var(--muted); text-transform: uppercase; }
+.net-row .v { color: var(--steel); }

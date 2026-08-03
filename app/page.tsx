@@ -1,80 +1,102 @@
 import Link from "next/link";
 
+const MOVES = [
+  "Jab", "Cross", "Lead Hook", "Rear Hook",
+  "Uppercut", "Side Kick", "Hadouken", "Shoryuken",
+];
+
 export default function MenuPage() {
   return (
-    <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-black">
-      {/* Background gradient */}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(220,38,38,0.15)_0%,_transparent_70%)]" />
-
-      {/* Title */}
-      <div className="relative z-10 flex flex-col items-center gap-10 px-6 text-center">
-        <div className="flex flex-col items-center gap-3">
-          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-red-500">
-            Computer Vision Fighting Game
-          </p>
-          <h1 className="text-6xl font-black uppercase tracking-tight text-white sm:text-8xl">
-            Street Fighter
-            <span className="block text-red-500">Live</span>
-          </h1>
-        </div>
-
-        {/* Move list */}
-        <div className="flex flex-wrap justify-center gap-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
-          {[
-            "Jab", "Cross", "Lead Hook", "Rear Hook",
-            "Uppercut", "Side Kick", "Hadouken", "Shoryuken",
-          ].map((move) => (
-            <span key={move} className="rounded border border-zinc-800 px-2 py-1">
-              {move}
-            </span>
-          ))}
-        </div>
-
-        {/* Mode buttons */}
-        <div className="mt-4 flex flex-col items-center gap-3 sm:flex-row">
-          <Link
-            href="/game"
-            className="group relative inline-flex items-center gap-3 border-2 border-red-500 bg-transparent px-10 py-5 text-lg font-black uppercase tracking-widest text-red-500 transition-all duration-150 hover:bg-red-500 hover:text-black"
-          >
-            <span>1P vs CPU</span>
-            <svg
-              className="h-5 w-5 transition-transform duration-150 group-hover:translate-x-1"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={3}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-            </svg>
-          </Link>
-
-          <Link
-            href="/versus"
-            className="group relative inline-flex items-center gap-3 border-2 border-zinc-700 bg-transparent px-10 py-5 text-lg font-black uppercase tracking-widest text-zinc-400 transition-all duration-150 hover:border-red-500 hover:text-red-500"
-          >
-            <span>2P Online</span>
-            <svg
-              className="h-5 w-5 transition-transform duration-150 group-hover:translate-x-1"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={3}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-            </svg>
-          </Link>
-        </div>
-
-        {/* Setup instructions */}
-        <div className="mt-2 max-w-sm text-center text-xs text-zinc-600">
-          <p>Requires a webcam. Stand 6–8 feet back so your full body is visible.</p>
-          <p className="mt-1">Best on desktop Chrome or Firefox.</p>
-        </div>
+    <main
+      style={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 34,
+        padding: 24,
+        textAlign: "center",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+        <p
+          style={{
+            fontSize: 10,
+            letterSpacing: ".34em",
+            textTransform: "uppercase",
+            color: "var(--steel)",
+          }}
+        >
+          Computer Vision Fighting Game
+        </p>
+        <h1
+          style={{
+            fontSize: "clamp(34px, 7vw, 64px)",
+            lineHeight: 1,
+            fontWeight: 800,
+            letterSpacing: ".06em",
+            textTransform: "uppercase",
+            color: "var(--paper)",
+            textShadow: "0 0 28px rgba(255,190,90,.28)",
+          }}
+        >
+          Street Fighter
+          <span style={{ display: "block", color: "var(--gold)" }}>Live</span>
+        </h1>
       </div>
 
-      {/* Bottom credit */}
-      <p className="absolute bottom-6 text-xs text-zinc-700">
-        Built with MediaPipe · ONNX Runtime Web · Canvas 2D · WebRTC
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          gap: 6,
+          maxWidth: 520,
+        }}
+      >
+        {MOVES.map(move => (
+          <span
+            key={move}
+            style={{
+              border: "1px solid var(--border)",
+              padding: "4px 8px",
+              fontSize: 9,
+              letterSpacing: ".16em",
+              textTransform: "uppercase",
+              color: "var(--muted)",
+            }}
+          >
+            {move}
+          </span>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 14 }}>
+        <Link href="/game" className="menu-btn">
+          1P vs CPU
+        </Link>
+        <Link href="/versus" className="menu-btn secondary">
+          2P Online
+        </Link>
+      </div>
+
+      <div style={{ fontSize: 10, lineHeight: 1.8, color: "var(--muted)", maxWidth: 380 }}>
+        <p>Requires a webcam. Stand 6–8 feet back so your full body is visible.</p>
+        <p>Keyboard debug controls work without one. Best on desktop Chrome.</p>
+      </div>
+
+      <p
+        style={{
+          position: "absolute",
+          bottom: 18,
+          fontSize: 9,
+          letterSpacing: ".18em",
+          textTransform: "uppercase",
+          color: "#2f2a3d",
+        }}
+      >
+        MediaPipe · ONNX Runtime Web · Canvas 2D · WebRTC
       </p>
     </main>
   );

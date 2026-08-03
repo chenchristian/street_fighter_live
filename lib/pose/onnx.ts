@@ -19,6 +19,8 @@ export interface InferenceResult {
   label: string;
   confidence: number;
   allProbs: number[]; // one probability per class, in label order
+  /** Argmax index in the model's own output order. */
+  index: number;
 }
 
 export async function runInference(
@@ -43,5 +45,5 @@ export async function runInference(
   const allProbs = exps.map(v => v / sum);
 
   const maxIdx = allProbs.indexOf(Math.max(...allProbs));
-  return { label: labels[maxIdx], confidence: allProbs[maxIdx], allProbs };
+  return { label: labels[maxIdx], confidence: allProbs[maxIdx], allProbs, index: maxIdx };
 }
