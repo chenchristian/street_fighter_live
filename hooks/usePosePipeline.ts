@@ -131,11 +131,14 @@ export function usePosePipeline() {
     }
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount. The <video> is captured on mount rather than read in
+  // the cleanup, where the ref may already have been detached — otherwise the
+  // camera's tracks are never stopped and the webcam light stays on.
   useEffect(() => {
+    const video = videoRef.current;
+    const raf = rafRef;
     return () => {
-      cancelAnimationFrame(rafRef.current);
-      const video = videoRef.current;
+      cancelAnimationFrame(raf.current);
       if (video?.srcObject) {
         (video.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       }

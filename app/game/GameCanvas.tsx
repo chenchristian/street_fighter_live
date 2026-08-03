@@ -80,9 +80,13 @@ function computeCamera(gs: GameState, bufW: number, bufH: number, prev: Camera |
   const viewW = bufW / scale;
   let centre = (px + cx) / 2;
 
-  // Keep the camera inside the stage bounds (Training.json: -1300..+1300).
+  // Clamp to the stage bounds (Training.json: -1300..+1300), but allow the
+  // camera a little past the wall. Without the overscan a cornered fighter sits
+  // flush against the edge of the frame and their sprite is clipped.
   const half = viewW / 2;
-  centre = viewW >= 2600 ? 0 : Math.max(-1300 + half, Math.min(1300 - half, centre));
+  const overscan = 130;
+  const limit = 1300 + overscan - half;
+  centre = limit <= 0 ? 0 : Math.max(-limit, Math.min(limit, centre));
 
   let floorPy = bufH * FLOOR_FRAC;
 
