@@ -6,7 +6,7 @@ import { usePosePipeline } from "@/hooks/usePosePipeline";
 import { useNetplay } from "@/hooks/useNetplay";
 import GameShell from "@/components/GameShell";
 import CvPanel from "@/components/CvPanel";
-import GameCanvas, { type MenuModel } from "../game/GameCanvas";
+import GameCanvas, { type MenuModel, type MenuHit } from "../game/GameCanvas";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 type Field = "mode" | "code" | "go";
@@ -39,6 +39,22 @@ export default function VersusPage() {
     }
   }, [isHosting, joinCode, host, join, startPose]);
 
+  const adjust = useCallback((field: Field) => {
+    if (field === "mode") setIsHosting(v => !v);
+  }, []);
+
+  const activate = useCallback((field: Field) => {
+    if (field === "go") launch();
+    else if (field === "mode") setIsHosting(v => !v);
+  }, [launch]);
+
+  const onMenuHit = useCallback((hit: MenuHit) => {
+    setCursor(hit.row);
+    const field = FIELDS[hit.row];
+    if (hit.dir !== 0) adjust(field);
+    else activate(field);
+  }, [adjust, activate]);
+
   // ── Lobby navigation ──
   useEffect(() => {
     if (launched) return;
@@ -70,19 +86,18 @@ export default function VersusPage() {
         case "ArrowLeft":
         case "ArrowRight":
           e.preventDefault();
-          if (field === "mode") setIsHosting(v => !v);
+          adjust(field);
           break;
         case "Enter":
         case "Space":
           e.preventDefault();
-          if (field === "go") launch();
-          else if (field === "mode") setIsHosting(v => !v);
+          activate(field);
           break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [launched, cursor, isHosting, launch]);
+  }, [launched, cursor, isHosting, adjust, activate]);
 
   const menu: MenuModel | null = useMemo(() => {
     if (launched) return null;
@@ -91,16 +106,18 @@ export default function VersusPage() {
       subtitle: "PEER TO PEER - ROLLBACK NETCODE",
       cursor,
       rows: [
-        { label: "MODE", value: isHosting ? "HOST" : "JOIN" },
+        { label: "MODE", value: isHosting ? "HOST" : "JOIN", cycles: true },
         {
           label: isHosting ? "ROOM CODE" : "ENTER CODE",
+          // No arrows: the host's code is generated, the guest types theirs.
           value: isHosting ? "AUTO" : joinCode.padEnd(5, "-"),
+          dim: isHosting,
         },
         { label: isHosting ? "CREATE ROOM" : "CONNECT", value: "" },
       ],
       footer: [
         isHosting ? "HOST PLAYS RYU ON THE LEFT" : "GUEST PLAYS KEN ON THE RIGHT",
-        "ARROWS SELECT - ENTER CONFIRMS",
+        isHosting ? "ARROW KEYS OR CLICK TO CHANGE" : "TYPE THE 5 LETTER CODE",
       ],
     };
   }, [launched, cursor, isHosting, joinCode]);
@@ -176,6 +193,7 @@ export default function VersusPage() {
           scale={scale}
           menu={menu}
           status={status}
+          onMenuHit={onMenuHit}
         />
       )}
     </GameShell>

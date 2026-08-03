@@ -40,11 +40,18 @@ const BOX_COLORS: Record<string, string> = {
   boundingbox: "rgb(255,255,255)",
 };
 
-// ─── Menu model, drawn in-canvas ─────────────────────────────────────────────
+// ─── Attract menu ─────────────────────────────────────────────────────────────
+// The pre-game options screen, drawn inside the game buffer like an arcade
+// attract screen. Layout lives in MENU so drawing and mouse hit-testing can
+// never drift apart.
 
 export interface MenuRow {
   label: string;
   value?: string;
+  /** Draws ‹ › around the value: this option cycles through a list. */
+  cycles?: boolean;
+  /** Greyed out — shown but currently has no effect. */
+  dim?: boolean;
 }
 
 export interface MenuModel {
@@ -55,6 +62,45 @@ export interface MenuModel {
   footer: string[];
 }
 
+/** Row geometry, in buffer pixels. */
+const MENU = {
+  startY: 76,
+  rowH: 16,
+  hlLeft: 56,
+  hlRight: GAME_W - 56,
+  labelX: 76,
+  arrowLX: 230,
+  arrowRX: 318,
+  valueCX: 277,
+  /** Click slop around each arrow glyph. */
+  arrowPad: 5,
+} as const;
+
+/** What a click at buffer coordinates (mx, my) landed on, if anything. */
+export interface MenuHit {
+  row: number;
+  /** -1 previous value, +1 next value, 0 select/confirm the row. */
+  dir: -1 | 0 | 1;
+}
+
+export function hitTestMenu(menu: MenuModel, mx: number, my: number): MenuHit | null {
+  const top = MENU.startY - 3;
+  const row = Math.floor((my - top) / MENU.rowH);
+  if (row < 0 || row >= menu.rows.length) return null;
+  if (mx < MENU.hlLeft || mx > MENU.hlRight) return null;
+
+  const def = menu.rows[row];
+  if (def.cycles) {
+    const p = MENU.arrowPad;
+    if (mx >= MENU.arrowLX - p && mx <= MENU.arrowLX + GLYPH_HIT + p) return { row, dir: -1 };
+    if (mx >= MENU.arrowRX - p && mx <= MENU.arrowRX + GLYPH_HIT + p) return { row, dir: 1 };
+  }
+  return { row, dir: 0 };
+}
+
+/** Width of one glyph at scale 1, for arrow hit boxes. */
+const GLYPH_HIT = 5;
+
 interface GameCanvasProps {
   gameState: GameState | null;
   showBoxes?: boolean;
@@ -64,6 +110,8 @@ interface GameCanvasProps {
   menu?: MenuModel | null;
   /** Replaces the menu with a single centred status line. */
   status?: string | null;
+  /** Mouse interaction with the attract menu. */
+  onMenuHit?: (hit: MenuHit) => void;
 }
 
 // ─── Sprites ──────────────────────────────────────────────────────────────────
@@ -125,7 +173,7 @@ function computeCamera(gs: GameState, prev: Camera | null): Camera {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function GameCanvas({
-  gameState, showBoxes = false, scale, menu = null, status = null,
+  gameState, showBoxes = false, scale, menu = null, status = null, onMenuHit,
 }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
@@ -190,6 +238,40 @@ export default function GameCanvas({
     return () => cancelAnimationFrame(animRef.current);
   }, [drawFrame]);
 
+  /** Client coordinates → buffer coordinates, whatever the CSS scale is. */
+  const toBuffer = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * GAME_W,
+      y: ((e.clientY - rect.top) / rect.height) * GAME_H,
+    };
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const m = menuRef.current;
+      if (!m || !onMenuHit) return;
+      const { x, y } = toBuffer(e);
+      const hit = hitTestMenu(m, x, y);
+      if (hit) onMenuHit(hit);
+    },
+    [onMenuHit, toBuffer]
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const m = menuRef.current;
+      const canvas = e.currentTarget;
+      if (!m || !onMenuHit) {
+        if (canvas.style.cursor) canvas.style.cursor = "";
+        return;
+      }
+      const { x, y } = toBuffer(e);
+      canvas.style.cursor = hitTestMenu(m, x, y) ? "pointer" : "default";
+    },
+    [onMenuHit, toBuffer]
+  );
+
   // width/height attributes are fixed in JSX and never touched again; scaling is
   // purely CSS. Changing the attributes would reallocate the backing store at a
   // different resolution, which is the one thing the spec forbids outright.
@@ -199,6 +281,8 @@ export default function GameCanvas({
       id="game"
       width={GAME_W}
       height={GAME_H}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
       style={{
         width: `${Math.round(GAME_W * scale)}px`,
         height: `${Math.round(GAME_H * scale)}px`,
@@ -487,6 +571,44 @@ function dim(ctx: CanvasRenderingContext2D): void {
   ctx.fillRect(0, 0, GAME_W, GAME_H);
 }
 
+/**
+ * Solid triangle, 4×7 to match the glyph cell.
+ *
+ * Drawn as scanlines rather than a path so the edges land on exact pixels —
+ * a filled path would antialias and read as soft against the bitmap text.
+ * The font has no ‹ › glyphs, hence drawing them.
+ */
+function triangle(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, dir: -1 | 1
+): void {
+  // width per scanline: 1,2,3,4,3,2,1 — a 4x7 triangle.
+  for (let r = 0; r < 7; r++) {
+    const w = 4 - Math.abs(r - 3);
+    const sx = dir < 0 ? x + (4 - w) : x;
+    ctx.fillRect(Math.round(sx), Math.round(y + r), w, 1);
+  }
+}
+
+function drawArrow(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, dir: -1 | 1, css: string
+): void {
+  // Outline by stamping the shape at the four neighbours, matching how the
+  // bitmap font bakes its 1px rim, so arrows stay legible over bright stage art.
+  ctx.fillStyle = "#000";
+  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+    triangle(ctx, x + dx, y + dy, dir);
+  }
+  ctx.fillStyle = css;
+  triangle(ctx, x, y, dir);
+}
+
+/** Selection caret: the same triangle, always pointing at the row. */
+function drawCaret(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  drawArrow(ctx, x, y, 1, "#ffcc44");
+}
+
 function drawMenu(ctx: CanvasRenderingContext2D, menu: MenuModel): void {
   dim(ctx);
 
@@ -499,30 +621,37 @@ function drawMenu(ctx: CanvasRenderingContext2D, menu: MenuModel): void {
     });
   }
 
-  const startY = 76;
-  const rowH = 16;
   for (let i = 0; i < menu.rows.length; i++) {
     const row = menu.rows[i];
-    const y = startY + i * rowH;
+    const y = MENU.startY + i * MENU.rowH;
     const selected = i === menu.cursor;
 
     if (selected) {
       ctx.fillStyle = "rgba(255,204,68,.14)";
-      ctx.fillRect(56, y - 3, GAME_W - 112, rowH - 2);
-      // Cursor caret
-      drawText(ctx, "*", 62, y, { colour: INK.gold, outline: INK.black });
+      ctx.fillRect(MENU.hlLeft, y - 3, MENU.hlRight - MENU.hlLeft, MENU.rowH - 2);
+      drawCaret(ctx, 62, y + 1);
     }
 
-    drawText(ctx, row.label, 76, y, {
-      colour: selected ? INK.paper : INK.steel,
-      outline: INK.black,
-    });
+    const labelInk = row.dim ? INK.muted : selected ? INK.paper : INK.steel;
+    drawText(ctx, row.label, MENU.labelX, y, { colour: labelInk, outline: INK.black });
+
     if (row.value) {
-      drawText(ctx, row.value, GAME_W - 76, y, {
-        colour: selected ? INK.gold : INK.sand,
-        outline: INK.black,
-        align: "right",
-      });
+      const valueInk = row.dim ? INK.muted : selected ? INK.gold : INK.sand;
+      if (row.cycles) {
+        // ‹ › make it obvious the value cycles, and give the mouse something to
+        // aim at. Brightened on the focused row so the affordance reads without
+        // shouting on the rows you aren't on.
+        const arrowCss = row.dim ? "#5c557a" : selected ? "#ffcc44" : "#6d7ea8";
+        drawArrow(ctx, MENU.arrowLX, y, -1, arrowCss);
+        drawArrow(ctx, MENU.arrowRX, y, 1, arrowCss);
+        drawText(ctx, row.value, MENU.valueCX, y, {
+          colour: valueInk, outline: INK.black, align: "center",
+        });
+      } else {
+        drawText(ctx, row.value, GAME_W - 76, y, {
+          colour: valueInk, outline: INK.black, align: "right",
+        });
+      }
     }
   }
 

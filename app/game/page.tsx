@@ -7,7 +7,7 @@ import { useGameEngine, type CpuMode } from "@/hooks/useGameEngine";
 import type { Difficulty } from "@/lib/game/cpu";
 import GameShell from "@/components/GameShell";
 import CvPanel from "@/components/CvPanel";
-import GameCanvas, { type MenuModel } from "./GameCanvas";
+import GameCanvas, { type MenuModel, type MenuHit } from "./GameCanvas";
 
 type MenuField = "opponent" | "difficulty" | "keyboard" | "boxes" | "start";
 const FIELDS: MenuField[] = ["opponent", "difficulty", "keyboard", "boxes", "start"];
@@ -42,14 +42,36 @@ export default function GamePage() {
     startGame();
   }, [startPose, startGame]);
 
+  // Value changes go through one place, so the arrow keys and the on-screen
+  // arrows can never drift out of step.
+  const adjust = useCallback((field: MenuField, dir: -1 | 1) => {
+    const cycle = <T,>(list: T[], cur: T, d: number): T =>
+      list[(list.indexOf(cur) + d + list.length) % list.length];
+    if (field === "opponent") setCpuMode(v => cycle(OPPONENTS, v, dir));
+    else if (field === "difficulty") setDifficulty(v => cycle(DIFFICULTIES, v, dir));
+    else if (field === "keyboard") setKeyboardEnabled(v => !v);
+    else if (field === "boxes") setShowBoxes(v => !v);
+  }, []);
+
+  /** Enter, or a click on the row body rather than one of its arrows. */
+  const activate = useCallback((field: MenuField) => {
+    if (field === "start") handleStart();
+    else if (field === "keyboard") setKeyboardEnabled(v => !v);
+    else if (field === "boxes") setShowBoxes(v => !v);
+  }, [handleStart]);
+
+  const onMenuHit = useCallback((hit: MenuHit) => {
+    setCursor(hit.row);
+    const field = FIELDS[hit.row];
+    if (hit.dir !== 0) adjust(field, hit.dir);
+    else activate(field);
+  }, [adjust, activate]);
+
   // ── Menu navigation, arrows + confirm ──
   useEffect(() => {
     if (started) return;
     const onKey = (e: KeyboardEvent) => {
       const field = FIELDS[cursor];
-      const cycle = <T,>(list: T[], cur: T, dir: number): T =>
-        list[(list.indexOf(cur) + dir + list.length) % list.length];
-
       switch (e.code) {
         case "ArrowUp":
           e.preventDefault();
@@ -60,28 +82,21 @@ export default function GamePage() {
           setCursor(c => (c + 1) % FIELDS.length);
           break;
         case "ArrowLeft":
-        case "ArrowRight": {
+        case "ArrowRight":
           e.preventDefault();
-          const dir = e.code === "ArrowLeft" ? -1 : 1;
-          if (field === "opponent") setCpuMode(v => cycle(OPPONENTS, v, dir));
-          else if (field === "difficulty") setDifficulty(v => cycle(DIFFICULTIES, v, dir));
-          else if (field === "keyboard") setKeyboardEnabled(v => !v);
-          else if (field === "boxes") setShowBoxes(v => !v);
+          adjust(field, e.code === "ArrowLeft" ? -1 : 1);
           break;
-        }
         case "Enter":
         case "Space":
         case "KeyA":
           e.preventDefault();
-          if (field === "start") handleStart();
-          else if (field === "keyboard") setKeyboardEnabled(v => !v);
-          else if (field === "boxes") setShowBoxes(v => !v);
+          activate(field);
           break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [started, cursor, handleStart]);
+  }, [started, cursor, adjust, activate]);
 
   const menu: MenuModel | null = useMemo(() => {
     if (started) return null;
@@ -90,15 +105,25 @@ export default function GamePage() {
       subtitle: "LIVE - CONTROLLED BY YOUR BODY",
       cursor,
       rows: [
-        { label: "OPPONENT", value: OPPONENT_LABEL[cpuMode] },
-        { label: "DIFFICULTY", value: difficulty.toUpperCase() },
-        { label: "KEYBOARD", value: keyboardEnabled ? "ON" : "OFF" },
-        { label: "HITBOXES", value: showBoxes ? "ON" : "OFF" },
+        { label: "OPPONENT", value: OPPONENT_LABEL[cpuMode], cycles: true },
+        {
+          label: "DIFFICULTY",
+          value: difficulty.toUpperCase(),
+          cycles: true,
+          // Difficulty only tunes the CPU AI; a punching bag takes no input at
+          // all, so the setting has nothing to act on. Say so rather than
+          // leaving a live-looking control that does nothing.
+          dim: cpuMode === "punchingBag",
+        },
+        { label: "KEYBOARD", value: keyboardEnabled ? "ON" : "OFF", cycles: true },
+        { label: "HITBOXES", value: showBoxes ? "ON" : "OFF", cycles: true },
         { label: "START", value: "" },
       ],
       footer: [
-        "ARROWS SELECT - ENTER CONFIRMS",
-        "STAND 6-8 FEET BACK, FULL BODY VISIBLE",
+        cpuMode === "punchingBag"
+          ? "PUNCH BAG IGNORES DIFFICULTY"
+          : "ARROW KEYS OR CLICK TO CHANGE",
+        "ENTER STARTS - STAND 6-8 FEET BACK",
       ],
     };
   }, [started, cursor, cpuMode, difficulty, keyboardEnabled, showBoxes]);
@@ -146,6 +171,7 @@ export default function GamePage() {
           scale={scale}
           menu={menu}
           status={status}
+          onMenuHit={onMenuHit}
         />
       )}
     </GameShell>
