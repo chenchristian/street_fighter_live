@@ -1,0 +1,39 @@
+[project]
+name = "street-fighter-live-tools"
+version = "0.1.0"
+description = "Python tooling for Street Fighter Live: exports the trained PyTorch LSTM to ONNX for onnxruntime-web."
+requires-python = ">=3.12,<3.13"
+
+# export_model.py imports the LSTM definition from the sibling
+# CV_to_StreetFighter checkout and unpickles its label encoder, so the pinned
+# versions here have to agree with that project's requirements.txt.
+dependencies = [
+    # numpy <2: pinned to match CV_to_StreetFighter, whose mediapipe 0.10.21
+    # requires it. Sharing one numpy avoids two incompatible ABIs on sys.path.
+    "numpy==1.26.4",
+    # Pinned to the version Models/LSTM_v1/label_encoder.pkl was written with;
+    # newer sklearn unpickles it with an InconsistentVersionWarning.
+    "scikit-learn==1.7.1",
+    "torch>=2.0.0",
+    # torch.onnx.export needs this to run the shape-inference pass.
+    "onnx>=1.15.0",
+    # torch>=2.6's exporter is built on onnxscript and imports it eagerly.
+    "onnxscript>=0.1.0",
+    # Verifies the exported graph loads and agrees with the torch output.
+    "onnxruntime>=1.17.0",
+
+    # Models/LSTM_v1/lstm_model.py imports the whole training stack at module
+    # scope, so importing the model class drags these in even though the export
+    # itself never uses them. Versions track CV_to_StreetFighter's requirements.
+    "pandas>=2.2",
+    "matplotlib>=3.8",
+    "seaborn>=0.12.0",
+    "opencv-contrib-python==4.11.0.86",
+]
+
+[dependency-groups]
+dev = []
+
+[tool.uv]
+# torch wheels are large; keep the resolver from re-fetching metadata each run.
+package = false

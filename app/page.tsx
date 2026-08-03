@@ -30,22 +30,40 @@ export default function MenuPage() {
           ))}
         </div>
 
-        {/* Play button */}
-        <Link
-          href="/game"
-          className="group relative mt-4 inline-flex items-center gap-3 border-2 border-red-500 bg-transparent px-12 py-5 text-lg font-black uppercase tracking-widest text-red-500 transition-all duration-150 hover:bg-red-500 hover:text-black"
-        >
-          <span>Play</span>
-          <svg
-            className="h-5 w-5 transition-transform duration-150 group-hover:translate-x-1"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={3}
+        {/* Mode buttons */}
+        <div className="mt-4 flex flex-col items-center gap-3 sm:flex-row">
+          <Link
+            href="/game"
+            className="group relative inline-flex items-center gap-3 border-2 border-red-500 bg-transparent px-10 py-5 text-lg font-black uppercase tracking-widest text-red-500 transition-all duration-150 hover:bg-red-500 hover:text-black"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-          </svg>
-        </Link>
+            <span>1P vs CPU</span>
+            <svg
+              className="h-5 w-5 transition-transform duration-150 group-hover:translate-x-1"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={3}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
+          </Link>
+
+          <Link
+            href="/versus"
+            className="group relative inline-flex items-center gap-3 border-2 border-zinc-700 bg-transparent px-10 py-5 text-lg font-black uppercase tracking-widest text-zinc-400 transition-all duration-150 hover:border-red-500 hover:text-red-500"
+          >
+            <span>2P Online</span>
+            <svg
+              className="h-5 w-5 transition-transform duration-150 group-hover:translate-x-1"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={3}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
+          </Link>
+        </div>
 
         {/* Setup instructions */}
         <div className="mt-2 max-w-sm text-center text-xs text-zinc-600">
@@ -56,7 +74,7 @@ export default function MenuPage() {
 
       {/* Bottom credit */}
       <p className="absolute bottom-6 text-xs text-zinc-700">
-        Built with MediaPipe · PyTorch LSTM · PixiJS
+        Built with MediaPipe · ONNX Runtime Web · Canvas 2D · WebRTC
       </p>
     </main>
   );

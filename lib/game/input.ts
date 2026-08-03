@@ -91,6 +91,15 @@ function matchMotion(hist: string[], seq: string[], window: number): boolean {
   return si < 0;
 }
 
+export interface DeviceState {
+  currentInput: string[];
+  interPress: boolean;
+  last: RawInput;
+  pressCharge: number[];
+  history: string[];
+  motionCooldown: number[];
+}
+
 export class InputDevice {
   /** Tokens for the current frame — read by updateChar via inputCurrentInput. */
   currentInput: string[] = ["5"];
@@ -111,6 +120,33 @@ export class InputDevice {
     this.pressCharge.fill(0);
     this.history = [];
     this.motionCooldown.fill(0);
+  }
+
+  /**
+   * Capture everything that affects future token output.
+   *
+   * Rollback has to rewind the input device alongside the simulation: the
+   * history buffer and press-edge state decide whether a motion fires, so a
+   * device left at the present would resolve a re-simulated frame differently.
+   */
+  save(): DeviceState {
+    return {
+      currentInput: [...this.currentInput],
+      interPress: this.interPress,
+      last: { dir: [...this.last.dir] as [number, number], buttons: [...this.last.buttons] },
+      pressCharge: [...this.pressCharge],
+      history: [...this.history],
+      motionCooldown: [...this.motionCooldown],
+    };
+  }
+
+  restore(s: DeviceState): void {
+    this.currentInput = [...s.currentInput];
+    this.interPress = s.interPress;
+    this.last = { dir: [...s.last.dir] as [number, number], buttons: [...s.last.buttons] };
+    this.pressCharge = [...s.pressCharge];
+    this.history = [...s.history];
+    this.motionCooldown = [...s.motionCooldown];
   }
 
   /**

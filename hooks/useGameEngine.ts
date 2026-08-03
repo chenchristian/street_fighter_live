@@ -8,6 +8,8 @@ import { CvSource, KeyboardSource } from "@/lib/game/sources";
 import { emptyRawInput } from "@/lib/game/input";
 import { gameRng } from "@/lib/game/rng";
 import { FixedClock } from "@/lib/game/clock";
+import { saveSnapshot, restoreSnapshot, checksum, type GameSnapshot } from "@/lib/net/snapshot";
+import { decodeInput } from "@/lib/net/protocol";
 import type { PredictionState } from "./usePosePipeline";
 
 async function loadCharData(url: string): Promise<CharData> {
@@ -104,6 +106,22 @@ export function useGameEngine(
             if (!g || !stg) return;
             for (let i = 0; i < n; i++) stepOnce(g, stg);
             setGameState({ ...g });
+          },
+          // Rollback primitives, exposed so determinism can be verified without
+          // standing up a second peer: snapshot, replay, compare checksums.
+          // __tickRaw bypasses the CPU controller (whose state is deliberately
+          // outside the snapshot — netplay is human vs human) so a replay is
+          // driven purely by the input masks handed to it.
+          __snapshot: () => (gameRef.current ? saveSnapshot(gameRef.current) : null),
+          __restore: (s: GameSnapshot) => {
+            if (gameRef.current) restoreSnapshot(gameRef.current, s);
+          },
+          __checksum: () => (gameRef.current ? checksum(gameRef.current) : 0),
+          __tickRaw: (p1 = 0, p2 = 0) => {
+            const g = gameRef.current;
+            const stg = stageRef.current;
+            if (!g || !stg) return;
+            tick(g, stg, { player: decodeInput(p1), cpu: decodeInput(p2) });
           },
         });
       }
