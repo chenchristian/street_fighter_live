@@ -28,9 +28,16 @@ export const spriteStats = {
   heldPrevious: 0,
   /** Sprites successfully preloaded. */
   preloaded: 0,
-  /** Sprites that 404'd or failed to decode. */
+  /** Sprites that 404'd, failed to decode, or timed out. */
   failed: 0,
+  /** True if preloading gave up on the remaining sprites and started anyway. */
+  deadlineHit: false,
 };
+
+/** A single image that hasn't answered in this long is written off. */
+const PER_IMAGE_TIMEOUT_MS = 8000;
+/** Preloading never blocks the game longer than this. */
+export const DEFAULT_PRELOAD_DEADLINE_MS = 20000;
 
 export function spriteUrl(name: string): string {
   return `/assets/images/${name}.png`;
@@ -92,7 +99,8 @@ export function collectSpriteRefs(data: unknown, out = new Set<string>()): Set<s
 export async function preloadSprites(
   names: Iterable<string>,
   onProgress?: (loaded: number, total: number) => void,
-  concurrency = 24
+  concurrency = 12,
+  totalDeadlineMs = DEFAULT_PRELOAD_DEADLINE_MS
 ): Promise<void> {
   const list = [...names].filter(n => {
     const existing = cache.get(n);
@@ -106,6 +114,7 @@ export async function preloadSprites(
 
   let loaded = 0;
   let cursor = 0;
+  const startedAt = Date.now();
 
   const loadOne = (name: string) =>
     new Promise<void>(resolve => {
@@ -119,11 +128,22 @@ export async function preloadSprites(
         resolve();
         return;
       }
+      let settled = false;
       const done = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         if (ok) spriteStats.preloaded++;
         else spriteStats.failed++;
         resolve();
       };
+      // A request that never fires load OR error would wedge this worker, and
+      // with it the whole Promise.all — which stalls the caller forever. That
+      // is not hypothetical: a phone pulling ~1600 files over a network hits
+      // connection limits and some requests simply hang. Give up on the image,
+      // not on the game; the renderer holds the previous frame for anything
+      // missing.
+      const timer = setTimeout(() => done(false), PER_IMAGE_TIMEOUT_MS);
       img.addEventListener("load", () => done(true), { once: true });
       img.addEventListener("error", () => done(false), { once: true });
       if (!img.src) img.src = spriteUrl(name);
@@ -131,6 +151,13 @@ export async function preloadSprites(
 
   const worker = async () => {
     while (cursor < total) {
+      // Overall deadline: past it, stop waiting and let the match begin. The
+      // images already requested keep loading in the background and land in the
+      // cache as they arrive.
+      if (Date.now() - startedAt > totalDeadlineMs) {
+        spriteStats.deadlineHit = true;
+        return;
+      }
       const name = list[cursor++];
       await loadOne(name);
       loaded++;
@@ -146,10 +173,11 @@ export async function preloadSprites(
 /** Preload everything reachable from a set of loaded JSON documents. */
 export async function preloadFrom(
   docs: unknown[],
-  onProgress?: (loaded: number, total: number) => void
+  onProgress?: (loaded: number, total: number) => void,
+  totalDeadlineMs = DEFAULT_PRELOAD_DEADLINE_MS
 ): Promise<number> {
   const refs = new Set<string>();
   for (const d of docs) collectSpriteRefs(d, refs);
-  await preloadSprites(refs, onProgress);
+  await preloadSprites(refs, onProgress, 12, totalDeadlineMs);
   return refs.size;
 }

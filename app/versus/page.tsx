@@ -131,7 +131,9 @@ export default function VersusPage() {
       case "waiting":
         return `SHARE THIS CODE\n*${net.roomCode}\nWAITING FOR OPPONENT`;
       case "connected":
-        return `CONNECTED\nLOADING SPRITES ${Math.round(loadProgress * 100)}%`;
+        if (!net.selfReady) return `LOADING SPRITES\n${Math.round(loadProgress * 100)}%`;
+        if (!net.peerReady) return "READY\nWAITING FOR OPPONENT TO LOAD";
+        return "STARTING MATCH";
       case "closed":
         return "OPPONENT DISCONNECTED";
       case "error":
@@ -139,7 +141,7 @@ export default function VersusPage() {
       default:
         return "STARTING";
     }
-  }, [launched, gameState, net.status, net.roomCode, net.detail, loadProgress]);
+  }, [launched, gameState, net.status, net.roomCode, net.detail, loadProgress, net.selfReady, net.peerReady]);
 
   return (
     <GameShell
@@ -177,6 +179,8 @@ export default function VersusPage() {
             <NetRow k="Delay" v={`${net.inputDelay} f`} />
             <NetRow k="Rollbacks" v={String(net.rollbacks)} />
             <NetRow k="Stalls" v={String(net.stalls)} />
+            <NetRow k="You" v={net.selfReady ? "ready" : `loading ${Math.round(loadProgress * 100)}%`} />
+            <NetRow k="Opponent" v={net.peerReady ? "ready" : "loading…"} />
           </div>
           {net.desynced && (
             <p className="cv-legend" style={{ color: "var(--blood)" }}>

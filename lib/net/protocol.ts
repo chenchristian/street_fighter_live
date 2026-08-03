@@ -62,6 +62,16 @@ export interface StartMessage {
   inputDelay: number;
 }
 
+/** Guest -> host: "I'm connected, send me the match parameters." */
+export interface HelloMessage {
+  t: "hello";
+}
+
+/** Either way: "my sprites are loaded, I can start simulating." */
+export interface ReadyMessage {
+  t: "ready";
+}
+
 export interface PingMessage {
   t: "ping";
   sent: number;
@@ -76,6 +86,8 @@ export type NetMessage =
   | InputMessage
   | SyncMessage
   | StartMessage
+  | HelloMessage
+  | ReadyMessage
   | PingMessage
   | PongMessage;
 
