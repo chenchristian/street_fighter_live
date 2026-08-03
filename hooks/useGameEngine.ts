@@ -46,7 +46,9 @@ export function useGameEngine(
   const keyboardRef = useRef<KeyboardSource>(new KeyboardSource());
 
   const optsRef = useRef({ cpuMode, difficulty, keyboardEnabled });
-  optsRef.current = { cpuMode, difficulty, keyboardEnabled };
+  useEffect(() => {
+    optsRef.current = { cpuMode, difficulty, keyboardEnabled };
+  }, [cpuMode, difficulty, keyboardEnabled]);
 
   // Keyboard listeners follow the debug flag.
   useEffect(() => {
@@ -139,6 +141,10 @@ export function useGameEngine(
         () => {
           const g = gameRef.current;
           if (g) setGameState({ ...g });
+          // Surfacing the active move here rather than from a prediction effect
+          // keeps setState in a callback from an external system (the clock),
+          // which is what React actually wants.
+          setActiveMove(cvRef.current.activeLabel);
         }
       );
     } catch (e) {
@@ -147,11 +153,10 @@ export function useGameEngine(
     }
   }, []);
 
-  // Feed classifier output into the CV input source.
+  // Push classifier output into the CV input source (an external system).
   useEffect(() => {
     if (!prediction) return;
     cvRef.current.setPrediction(prediction.label, prediction.direction);
-    if (prediction.label !== "idle") setActiveMove(prediction.label);
   }, [prediction]);
 
   useEffect(() => {

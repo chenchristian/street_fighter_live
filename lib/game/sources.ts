@@ -112,6 +112,8 @@ export class CvSource {
   private lockout = 0;
   private lastLabel = "idle";
   private walk = 0;
+  /** Label of the move currently being performed, for the UI. Null when idle. */
+  activeLabel: string | null = null;
 
   reset(): void {
     this.move = null;
@@ -119,6 +121,7 @@ export class CvSource {
     this.lockout = 0;
     this.lastLabel = "idle";
     this.walk = 0;
+    this.activeLabel = null;
   }
 
   /** Feed a new classification. Safe to call at the classifier's own rate. */
@@ -139,6 +142,7 @@ export class CvSource {
     const move = CV_MOVES[label];
     if (!move) return;
     this.move = move;
+    this.activeLabel = label;
     this.pressTimer = CvSource.PRESS_FRAMES;
     this.lockout = CvSource.REPEAT_LOCKOUT;
   }
@@ -148,7 +152,10 @@ export class CvSource {
     const raw = emptyRawInput();
     const commands: string[] = [];
 
-    if (this.lockout > 0) this.lockout--;
+    if (this.lockout > 0) {
+      this.lockout--;
+      if (this.lockout === 0) this.activeLabel = null;
+    }
 
     if (this.move && this.pressTimer > 0) {
       for (const b of this.move.buttons) {
