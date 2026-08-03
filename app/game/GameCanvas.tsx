@@ -229,7 +229,14 @@ function drawChar(
   const screenX = gx(char.pos[0]);
   const screenY = gy(char.pos[1]);
 
-  let drawX = screenX - anchorXRatio * sw;
+  // The mirror below reflects about screenX, which is the anchor, so the anchor
+  // stays put and the art flips around it — the same net result as Python, which
+  // mirrors image_offset by facing AND flips the texture. Crucially drawX is the
+  // SAME whether or not we flip. Adjusting it to (1 - anchorXRatio) as well
+  // double-applied the mirror, displacing the sprite by |2a-1| * width: harmless
+  // for characters (Ryu's anchor is 0.501, so 1 unit) but 566 units for hit
+  // sparks and 320 for the fireball, which is why those spawned way off.
+  const drawX = screenX - anchorXRatio * sw;
   const drawY = screenY - anchorYRatio * sh;
 
   // Source sprites face LEFT; flip when the character faces right.
@@ -250,7 +257,6 @@ function drawChar(
     ctx.translate(screenX, 0);
     ctx.scale(-1, 1);
     ctx.translate(-screenX, 0);
-    drawX = screenX - (1 - anchorXRatio) * sw;
   }
 
   const [tr, tg, tb, ta] = char.imageTint;
