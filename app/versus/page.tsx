@@ -176,6 +176,7 @@ export default function VersusPage() {
             <NetRow k="Role" v={launched ? (net.isHost ? "Host / Ryu" : "Guest / Ken") : isHosting ? "Host / Ryu" : "Guest / Ken"} />
             <NetRow k="Room" v={net.roomCode || "—"} />
             <NetRow k="Ping" v={`${net.rtt} ms`} />
+            <NetRow k="Path" v={net.route ?? net.iceState} />
             <NetRow k="Delay" v={`${net.inputDelay} f`} />
             <NetRow k="Rollbacks" v={String(net.rollbacks)} />
             <NetRow k="Stalls" v={String(net.stalls)} />

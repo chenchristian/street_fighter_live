@@ -58,12 +58,17 @@ export interface NetplayState {
   peerReady: boolean;
   /** True once the clock is running. */
   running: boolean;
+  /** Raw ICE state, so a blocked network is diagnosable. */
+  iceState: string;
+  /** "direct" peer-to-peer, or "relay" through TURN. */
+  route: "direct" | "relay" | null;
 }
 
 const INITIAL: NetplayState = {
   status: "idle", detail: "", roomCode: "", isHost: false,
   rtt: 0, inputDelay: 3, rollbacks: 0, stalls: 0, desynced: false,
   selfReady: false, peerReady: false, running: false,
+  iceState: "new", route: null,
 };
 
 export function useNetplay(prediction: PredictionState | null, keyboardEnabled = true) {
@@ -163,6 +168,8 @@ export function useNetplay(prediction: PredictionState | null, keyboardEnabled =
             rollbacks: s.stats.rollbacks,
             stalls: s.stats.stalls,
             desynced: s.desyncedAt !== null,
+            iceState: link.iceState,
+            route: link.route,
           }));
         }
       }
@@ -340,6 +347,21 @@ export function useNetplay(prediction: PredictionState | null, keyboardEnabled =
     linkRef.current = link;
     await link.join(code.toUpperCase());
   }, [handleMessage, onStatus]);
+
+  // Poll the transport during the handshake too — the match may never start,
+  // and that is exactly when knowing the ICE state matters most.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const link = linkRef.current;
+      if (!link) return;
+      setNet(n =>
+        n.iceState === link.iceState && n.route === link.route && n.rtt === link.rtt
+          ? n
+          : { ...n, iceState: link.iceState, route: link.route, rtt: link.rtt }
+      );
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const clock = clockRef.current;
