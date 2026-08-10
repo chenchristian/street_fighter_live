@@ -39,41 +39,60 @@ export interface WalkDebug {
   /** Walk direction in IMAGE space (the downstream mirror-flip is applied
    *  later, in CvSource.setPrediction). null = neutral. */
   dir: WalkDir;
-  /** Signed displacement from home, in body widths. + = image-right. */
-  deltaNorm: number;
-  /** Current resting-centre x (normalised frame coords), null before seeded. */
-  baseline: number | null;
+  /** Signed speed envelope driving the walk, body widths/frame. + = image-right. */
+  vel: number;
+  /** Envelope magnitude this frame (|vel|). */
+  speed: number;
   /** Reference scale used this frame (shoulder width, floored). */
   scale: number;
-  /** True if the baseline was held this frame (i.e. you were displaced). */
-  frozen: boolean;
+  /** True while the envelope is coasting down after motion stopped. */
+  coasting: boolean;
 }
 
-const NEUTRAL: WalkDebug = { dir: null, deltaNorm: 0, baseline: null, scale: 0, frozen: false };
+const NEUTRAL: WalkDebug = { dir: null, vel: 0, speed: 0, scale: 0, coasting: false };
 
 /**
- * Position-based walk detection.
+ * Fixed light smoothing on the torso centre, applied before velocity is
+ * measured. Kills single-frame landmark jitter (~2–3 frame denoise) so a still
+ * body reads as still. Not exposed — the tunable behaviour is the coast, which
+ * shapes the release; this only cleans the raw signal.
+ */
+const CENTER_SMOOTH = 0.5;
+/** Coast can approach but never reach 1, or the envelope would never decay. */
+const MAX_COAST = 0.97;
+
+/**
+ * Velocity-based walk detection (normalised).
  *
- * The old detector measured frame-to-frame VELOCITY: you walked only while you
- * were physically moving, so a held lean decayed to neutral the instant you
- * stopped. This measures DISPLACEMENT from a slowly-adapting resting centre
- * ("home") instead — so leaning off-centre and holding keeps you walking, the
- * way a joystick held to one side keeps the fighter moving. Step back to home
- * to stop.
+ * You walk while you are MOVING and stop when you stop — the direct, momentary
+ * feel. Two things make that usable rather than twitchy:
  *
- * Home follows you (EMA) only while you are near neutral; it FREEZES the moment
- * you lean past the walk threshold, so an intentional hold is never quietly
- * absorbed into home. That freeze is the one subtle rule the whole feel rests
- * on — see the block-decay note in lib/tuning.ts (cv.baselineAdapt).
+ *   * Torso-only centre + shoulder-width normalisation, so the trigger is a
+ *     speed in *body widths per frame* and means the same close to the camera
+ *     or far back (the depth-independence we wanted to keep).
+ *   * An asymmetric envelope: it snaps up instantly to new motion (you move →
+ *     you walk, no lag on onset) but eases *down* at a tunable rate after you
+ *     stop. That release rate is cv.walkCoast: 0 = stop the instant motion
+ *     drops, →1 = a long glide. It's what lets a real walk — whose frame-to-
+ *     frame speed naturally flickers — read as one continuous walk instead of
+ *     stuttering, and it's the single knob for how sharply walking ends.
  *
- * Stateful, so it lives as an instance the pipeline holds across frames and
- * resets when the body leaves view.
+ * Stateful: the pipeline holds one instance across frames and resets it when
+ * the body leaves view.
  */
 export class WalkTracker {
-  private baseline: number | null = null;
+  private cxSmooth: number | null = null;
+  private prevCx: number | null = null;
+  /** Speed-magnitude envelope, body widths/frame. */
+  private env = 0;
+  /** Latched sign of the current motion (+1 image-right, -1 image-left). */
+  private dirSign = 0;
 
   reset(): void {
-    this.baseline = null;
+    this.cxSmooth = null;
+    this.prevCx = null;
+    this.env = 0;
+    this.dirSign = 0;
   }
 
   update(lms: NLandmark[]): WalkDebug {
@@ -87,12 +106,12 @@ export class WalkTracker {
     // Torso centre from whatever torso points are visible. Shoulders and hips
     // only — no face or limbs, so head-turns and arm-swings don't drift it.
     const torso = [ls, rs, lh, rh].filter((p): p is NLandmark => p !== null);
-    if (torso.length < 2) return NEUTRAL;
+    if (torso.length < 2) return { ...NEUTRAL, speed: this.env };
     const cx = torso.reduce((s, p) => s + p.x, 0) / torso.length;
 
     // Reference scale: shoulder width (survives crouching, unlike torso
     // height); fall back to torso height if a shoulder is hidden; floor it so a
-    // foreshortened torso when you turn can't spike the displacement.
+    // foreshortened torso when you turn can't spike the measured speed.
     let scale = ls && rs ? Math.abs(ls.x - rs.x) : 0;
     if (scale < MIN_REF_SCALE && (ls || rs) && (lh || rh)) {
       const sy = (ls ?? rs)!.y;
@@ -101,38 +120,49 @@ export class WalkTracker {
     }
     scale = Math.max(MIN_REF_SCALE, scale);
 
-    // Seed home on first sight, so the first frame reads as dead neutral rather
-    // than a huge jump from nothing.
-    if (this.baseline === null) this.baseline = cx;
+    // Denoise the centre, then take its frame-to-frame velocity.
+    this.cxSmooth = this.cxSmooth === null
+      ? cx
+      : CENTER_SMOOTH * cx + (1 - CENTER_SMOOTH) * this.cxSmooth;
+    if (this.prevCx === null) {
+      this.prevCx = this.cxSmooth;
+      return { dir: null, vel: 0, speed: 0, scale, coasting: false };
+    }
+    const d = (this.cxSmooth - this.prevCx) / scale;   // body widths / frame
+    this.prevCx = this.cxSmooth;
 
-    const deltaNorm = (cx - this.baseline) / scale;
+    // Asymmetric envelope: instant attack, coasted release.
+    const { walkThreshold, walkCoast } = TUNING.cv;
+    const coast = Math.min(Math.max(walkCoast, 0), MAX_COAST);
+    const mag = Math.abs(d);
+    let coasting = false;
+    if (mag >= this.env) {
+      this.env = mag;                       // new/faster motion: respond now
+      if (d !== 0) this.dirSign = Math.sign(d);
+    } else {
+      this.env *= coast;                    // slower/stopped: glide down
+      coasting = true;
+    }
 
-    // Direction: displacement past the threshold, or the edge failsafe.
-    const { walkThreshold, walkEdge, baselineAdapt } = TUNING.cv;
-    let dir: WalkDir = null;
-    if (cx >= 1 - walkEdge) dir = "RIGHT";
-    else if (cx <= walkEdge) dir = "LEFT";
-    else if (deltaNorm > walkThreshold) dir = "RIGHT";
-    else if (deltaNorm < -walkThreshold) dir = "LEFT";
+    const dir: WalkDir =
+      this.env > walkThreshold && this.dirSign !== 0
+        ? (this.dirSign > 0 ? "RIGHT" : "LEFT")
+        : null;
 
-    // Freeze home while displaced; only let it drift when neutral.
-    const frozen = dir !== null;
-    if (!frozen) this.baseline = baselineAdapt * cx + (1 - baselineAdapt) * this.baseline;
-
-    return { dir, deltaNorm, baseline: this.baseline, scale, frozen };
+    return { dir, vel: this.dirSign * this.env, speed: this.env, scale, coasting };
   }
 }
 
 if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
-  // Dev handle: the freeze policy is only checkable synthetically here, since
-  // the preview pane can't grant camera access. Drive it from the console with
-  // a fake torso, e.g.:
-  //   const t = new window.__WalkTracker();
-  //   const f = (cx, sw=0.2) => t.update([]
-  //     .concat(Array(11).fill({x:0,y:0,visibility:0}))
-  //     .concat([{x:cx-sw/2,y:.3,visibility:1},{x:cx+sw/2,y:.3,visibility:1}])
-  //     .concat(Array(10).fill({x:0,y:0,visibility:0}))
-  //     .concat([{x:cx-sw/2,y:.7,visibility:1},{x:cx+sw/2,y:.7,visibility:1}]));
+  // Dev handle: walk logic is only checkable synthetically here, since the
+  // preview pane can't grant camera access. Feed it a moving fake torso —
+  // velocity comes from the CHANGE in cx between frames, e.g.:
+  //   const t = new window.__WalkTracker(), mk = (cx, sw=0.2) => {
+  //     const a = Array(33).fill(0).map(() => ({x:0,y:0,visibility:0}));
+  //     a[11]={x:cx-sw/2,y:.3,visibility:1}; a[12]={x:cx+sw/2,y:.3,visibility:1};
+  //     a[23]={x:cx-sw/2,y:.7,visibility:1}; a[24]={x:cx+sw/2,y:.7,visibility:1};
+  //     return a; };
+  //   t.update(mk(0.50)); t.update(mk(0.47));  // stepped left → dir LEFT
   (window as unknown as Record<string, unknown>).__WalkTracker = WalkTracker;
 }
 

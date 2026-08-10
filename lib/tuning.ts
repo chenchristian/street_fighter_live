@@ -36,30 +36,24 @@ export const TUNING = {
     repeatLockout: 15,
 
     /**
-     * How far you must stand from your resting centre to register as walking,
-     * measured in BODY WIDTHS (shoulder widths), not frame fraction — so it
-     * means the same thing whether you stand close to the camera or far back.
-     * 0.15 ≈ lean about one-sixth of your shoulder width off centre. You keep
-     * walking the whole time you stay leaned; step back to centre to stop.
-     * LOWER = twitchier; HIGHER = you must commit a bigger lean.
+     * How fast you must be MOVING to register as walking — a speed, in body
+     * widths per frame. Normalised by shoulder width, so it means the same
+     * whether you stand close to the camera or far back. You walk while you're
+     * moving and stop when you stop. LOWER = registers slower, gentler walks
+     * (but more sensitive to noise); HIGHER = you must move more briskly.
      */
-    walkThreshold: 0.15,
+    walkThreshold: 0.04,
 
     /**
-     * How fast your resting centre ("home") drifts to follow you when you are
-     * standing neutral, 0–1 per frame. Home stops moving the instant you lean
-     * past walkThreshold, so a held lean is never absorbed. LOWER = home is
-     * stiffer (leans hold longer but slow real drift takes longer to forgive);
-     * HIGHER = re-centres faster but a sustained lean decays sooner.
+     * Coast: how long walking lingers after you stop moving, 0–1.
+     *   0   = instant — the frame your motion drops, walking stops (crispest,
+     *         but twitchiest, since real walking speed flickers frame to frame).
+     *   ~0.5 = a short, smooth tail of a few frames after you stop.
+     *   →1  = long momentum; walking glides on well after you've stopped.
+     * Onset is always immediate (you move → you walk); this only shapes the
+     * release. Clamped below 1 internally so it can never stick on forever.
      */
-    baselineAdapt: 0.05,
-
-    /**
-     * Failsafe: if your body's centre reaches within this fraction of the very
-     * left/right edge of the camera frame, you walk that way regardless of the
-     * baseline. Guarantees you can always induce a walk even if home is off.
-     */
-    walkEdge: 0.12,
+    walkCoast: 0.5,
   },
 
   // ── CPU opponent ────────────────────────────────────────────────────────────
@@ -95,3 +89,10 @@ export const TUNING = {
     startDistance: 300,
   },
 } as const;
+
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+  // Dev handle: tweak values live from the console, e.g.
+  //   window.__TUNING.cv.walkCoast = 0.7
+  // Reads are per-frame, so changes take effect immediately without reload.
+  (window as unknown as Record<string, unknown>).__TUNING = TUNING;
+}
