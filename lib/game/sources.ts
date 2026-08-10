@@ -5,6 +5,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import { BTN, BUTTON_COUNT, emptyRawInput, type RawInput } from "./input";
+import { TUNING } from "@/lib/tuning";
 
 // ─── Keyboard (debug) ────────────────────────────────────────────────────────
 // Layout from CV_to_StreetFighter/keyboardguide.txt:
@@ -103,9 +104,9 @@ export const CV_MOVES: Record<string, CvMove> = {
  */
 export class CvSource {
   /** Frames a classified move stays held. Roughly one press at 60fps. */
-  static readonly PRESS_FRAMES = 4;
+  static readonly PRESS_FRAMES = TUNING.cv.pressFrames;
   /** Frames a fired label is ignored for, so a held pose fires once. */
-  static readonly REPEAT_LOCKOUT = 20;
+  static readonly REPEAT_LOCKOUT = TUNING.cv.repeatLockout;
 
   private move: CvMove | null = null;
   private pressTimer = 0;

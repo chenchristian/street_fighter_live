@@ -15,6 +15,7 @@ import { buildStage, drawStage, type Stage } from "@/lib/render/stage";
 import { drawText, textWidth, rgba } from "@/lib/render/font";
 import { getImage, noteHeldPrevious } from "@/lib/render/textures";
 import { INK } from "@/lib/render/palette";
+import { TUNING } from "@/lib/tuning";
 
 export const GAME_W = 384;
 export const GAME_H = 224;
@@ -27,12 +28,13 @@ export const GAME_H = 224;
 //
 // CAM_VIEW_HEIGHT is the *tightest* the camera ever gets: a ~310-unit fighter
 // then occupies ~99px of the 224px screen, the classic Street Fighter
-// proportion. From there the camera only ever zooms out.
-const CAM_VIEW_HEIGHT = 700;
+// proportion. From there the camera only ever zooms out. These three are
+// player-tunable — see lib/tuning.ts (camera.*).
+const CAM_VIEW_HEIGHT = TUNING.camera.viewHeight;
 /** Clear space kept between a body and the left/right frame edge. */
-const CAM_PAD_X = 150;
+const CAM_PAD_X = TUNING.camera.padX;
 /** Clear space kept above the higher fighter's head. */
-const CAM_PAD_TOP = 70;
+const CAM_PAD_TOP = TUNING.camera.padTop;
 /** Body size assumed when a state carries no bounding box. */
 const BODY_HALF_W = 90;
 const BODY_H = 330;

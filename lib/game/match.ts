@@ -10,9 +10,10 @@ import { createChar, updateChar, objectRegistry } from "./engine";
 import { runCollisions } from "./collision";
 import { InputDevice, emptyRawInput, type RawInput } from "./input";
 import { gameRng } from "./rng";
+import { TUNING } from "@/lib/tuning";
 
-export const ROUND_TIMER_FRAMES = 60 * 99;
-export const ROUNDS_TO_WIN = 2;
+export const ROUND_TIMER_FRAMES = 60 * TUNING.match.roundSeconds;
+export const ROUNDS_TO_WIN = TUNING.match.roundsToWin;
 
 // Announcer beats, in frames at 60fps
 const INTRO_ROUND_FRAMES = 90;   // "ROUND n"
@@ -20,7 +21,7 @@ const INTRO_FIGHT_FRAMES = 60;   // "FIGHT!"
 const ROUND_END_FRAMES   = 180;  // knockdown plays out under "KO!"
 const MATCH_END_FRAMES   = 240;
 
-const SPAWN_X = 300;
+const SPAWN_X = TUNING.match.startDistance;
 
 export interface TickInputs {
   player: RawInput;

@@ -1,14 +1,18 @@
 // Mirrors the filtering logic from pose_worker.py
 
+import { TUNING } from "@/lib/tuning";
+
 export const REMOVE_INDICES = new Set([1, 3, 4, 6, 17, 18, 19, 20, 21, 22, 31, 32]);
 
 // Landmarks used for left/right movement detection (body + face, no hands/feet)
 const BODY_FACE_INDICES = [0,2,5,7,8,9,10,11,12,13,14,15,16,23,24,25,26,27,28,29,30];
 
 export const SEQUENCE_LENGTH = 5;
-export const CONFIDENCE_THRESHOLD = 0.8;
-export const MOVEMENT_THRESHOLD = 0.015;
-export const EDGE_THRESHOLD = 0.15;
+// Locked to the trained model — do not change here. The tunable gate lives in
+// lib/tuning.ts (cv.confidenceGate).
+export const CONFIDENCE_THRESHOLD = TUNING.cv.confidenceGate;
+export const MOVEMENT_THRESHOLD = TUNING.cv.walkThreshold;
+export const EDGE_THRESHOLD = TUNING.cv.walkEdge;
 
 export interface NLandmark {
   x: number;

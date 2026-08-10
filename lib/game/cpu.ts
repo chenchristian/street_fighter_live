@@ -11,6 +11,7 @@
 import type { CharState } from "./types";
 import { BTN, emptyRawInput, type RawInput } from "./input";
 import type { Rng } from "./rng";
+import { TUNING } from "@/lib/tuning";
 
 export type Difficulty = "easy" | "medium" | "hard";
 
@@ -27,11 +28,7 @@ export interface CpuConfig {
   specialChance: number;
 }
 
-export const DIFFICULTIES: Record<Difficulty, CpuConfig> = {
-  easy:   { reactionFrames: 24, blockChance: 0.25, aggression: 0.35, comboChance: 0.10, specialChance: 0.15 },
-  medium: { reactionFrames: 14, blockChance: 0.55, aggression: 0.55, comboChance: 0.35, specialChance: 0.30 },
-  hard:   { reactionFrames: 6,  blockChance: 0.85, aggression: 0.75, comboChance: 0.60, specialChance: 0.50 },
-};
+export const DIFFICULTIES: Record<Difficulty, CpuConfig> = TUNING.cpu;
 
 // ─── Action scripts ───────────────────────────────────────────────────────────
 // A step is one frame's worth of intent, held for `frames` frames. Directions

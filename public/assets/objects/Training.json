@@ -14,7 +14,7 @@
     "def_image_offset":[0,0,0],
     "palette":[[]],
     "gauges":[],
-    "boxes":{"boundingbox":{"boxes":[[-1300,-400,2600,400]]}},
+    "boxes":{"boundingbox":{"boxes":[[-900,-400,1800,400]]}},
     "camera_focus_point_limit":[[-1300,1300],[1000,-80]],
     "trials":[],
     "states": {
