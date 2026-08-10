@@ -21,29 +21,45 @@ export const TUNING = {
   // How the classified body pose becomes a controller press.
   cv: {
     /**
-     * The "moving threshold": how sure the model must be before a move fires,
+     * how sure the model must be before a move fires,
      * 0–1. Higher = fewer misfires but you must hit the pose cleanly; lower =
      * more responsive but more false triggers. The vertical line in the model
      * output histogram is this value.
      */
     confidenceGate: 0.8,
+
     /** How many frames a detected move is held as a button press (~one press). */
-    pressFrames: 4,
+    pressFrames: 3,
+
     /** Cooldown before the same held pose can fire again, so a sustained pose
      *  fires once instead of every frame. Raise if moves double-trigger. */
-    repeatLockout: 20,
+    repeatLockout: 15,
+
     /**
-     * How far you must lean/step frame-to-frame to register as walking, as a
-     * fraction of frame width (0–1). LOWER = walks on the slightest movement;
-     * HIGHER = you must step further before the fighter walks.
+     * How far you must stand from your resting centre to register as walking,
+     * measured in BODY WIDTHS (shoulder widths), not frame fraction — so it
+     * means the same thing whether you stand close to the camera or far back.
+     * 0.15 ≈ lean about one-sixth of your shoulder width off centre. You keep
+     * walking the whole time you stay leaned; step back to centre to stop.
+     * LOWER = twitchier; HIGHER = you must commit a bigger lean.
      */
-    walkThreshold: 0.015,
+    walkThreshold: 0.15,
+
     /**
-     * If your body's centre is within this fraction of the left/right edge of
-     * the camera frame, you walk that way regardless of movement. Lets you hold
-     * a walk by standing to one side.
+     * How fast your resting centre ("home") drifts to follow you when you are
+     * standing neutral, 0–1 per frame. Home stops moving the instant you lean
+     * past walkThreshold, so a held lean is never absorbed. LOWER = home is
+     * stiffer (leans hold longer but slow real drift takes longer to forgive);
+     * HIGHER = re-centres faster but a sustained lean decays sooner.
      */
-    walkEdge: 0.15,
+    baselineAdapt: 0.05,
+
+    /**
+     * Failsafe: if your body's centre reaches within this fraction of the very
+     * left/right edge of the camera frame, you walk that way regardless of the
+     * baseline. Guarantees you can always induce a walk even if home is off.
+     */
+    walkEdge: 0.12,
   },
 
   // ── CPU opponent ────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
   landmarksToVector,
-  detectMovement,
+  WalkTracker,
   drawSkeleton,
   SEQUENCE_LENGTH,
   CONFIDENCE_THRESHOLD,
@@ -35,7 +35,7 @@ export function usePosePipeline() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
-  const prevCxRef = useRef<number | null>(null);
+  const walkRef = useRef(new WalkTracker());
   const seqBuf = useRef<Float32Array[]>([]);
 
   const [status, setStatus] = useState<PipelineStatus>("idle");
@@ -145,8 +145,7 @@ export function usePosePipeline() {
           seqBuf.current.push(vec);
           if (seqBuf.current.length > SEQUENCE_LENGTH) seqBuf.current.shift();
 
-          const { dir, cx } = detectMovement(lms, prevCxRef.current);
-          prevCxRef.current = cx;
+          const { dir } = walkRef.current.update(lms);
 
           if (seqBuf.current.length === SEQUENCE_LENGTH && !inferring) {
             inferring = true;
@@ -172,7 +171,7 @@ export function usePosePipeline() {
           }
         } else {
           bodySeen = false;
-          prevCxRef.current = null;
+          walkRef.current.reset();
           seqBuf.current = [];
         }
 
