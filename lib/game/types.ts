@@ -213,4 +213,10 @@ export interface GameState {
   /** Big centred announcer text, e.g. "ROUND 1", "FIGHT!", "KO!". */
   announcer: string;
   combo: ComboState | null;
+  /**
+   * World x of the stage's left and right walls, read from the stage's
+   * boundingbox at load. Constant for the match; the camera needs it, and
+   * hard-coding it meant a stage of a different width silently broke framing.
+   */
+  stageBounds: [number, number];
 }

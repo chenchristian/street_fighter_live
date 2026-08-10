@@ -19,16 +19,33 @@ import { INK } from "@/lib/render/palette";
 export const GAME_W = 384;
 export const GAME_H = 224;
 
-// Camera framing, in world units. Zoom is anchored to the vertical extent, so a
-// ~310-unit-tall character keeps a constant on-screen size whatever the viewport
-// aspect. 700 puts them at ~99px of the 224px screen — a little under half,
-// which is the classic Street Fighter proportion and leaves the 384px width
-// showing ~1200 units of stage rather than crowding the pair together.
+// Camera framing, in world units.
+//
+// The rule the camera has to obey is absolute: both fighters' bodies are fully
+// on screen on every frame, with no exceptions for fast movement or for a
+// smoothing lag. Everything below is in service of that.
+//
+// CAM_VIEW_HEIGHT is the *tightest* the camera ever gets: a ~310-unit fighter
+// then occupies ~99px of the 224px screen, the classic Street Fighter
+// proportion. From there the camera only ever zooms out.
 const CAM_VIEW_HEIGHT = 700;
-const CAM_MAX_WIDTH = 1500;
-const CAM_PAD = 250;
+/** Clear space kept between a body and the left/right frame edge. */
+const CAM_PAD_X = 150;
+/** Clear space kept above the higher fighter's head. */
+const CAM_PAD_TOP = 70;
+/** Body size assumed when a state carries no bounding box. */
+const BODY_HALF_W = 90;
+const BODY_H = 330;
 const FLOOR_FRAC = 0.86;
-const STAGE_HALF = 1300;
+/**
+ * How far down the floor may be pushed to make room for a jump, as a fraction
+ * of screen height. Panning is preferred over zooming — it keeps the fighters
+ * at a readable size — but the floor has to stay on screen, so past this point
+ * the camera zooms out instead.
+ */
+const FLOOR_MAX_FRAC = 0.97;
+/** Never zoom out further than this, whatever the numbers say. */
+const MIN_SCALE = 0.06;
 
 const BOX_COLORS: Record<string, string> = {
   hurtbox: "rgb(20,20,255)",
@@ -136,38 +153,94 @@ interface Camera {
   floorPy: number;
 }
 
+/** The world-space box a fighter's body actually occupies this frame. */
+function bodyExtent(c: CharState): { left: number; right: number; top: number } {
+  // boundingbox is the physical body — the same box the stage walls collide
+  // against — and states may resize it (crouch, tumble). pushbox is the fallback
+  // for anything without one.
+  const box =
+    c.boxes["boundingbox"]?.boxes?.[0] ?? c.boxes["pushbox"]?.boxes?.[0] ?? null;
+  if (!box) {
+    return {
+      left: c.pos[0] - BODY_HALF_W,
+      right: c.pos[0] + BODY_HALF_W,
+      top: c.pos[1] + BODY_H,
+    };
+  }
+  const [wx, wy, w, h] = worldBox(box, c);
+  return { left: wx, right: wx + w, top: wy + h };
+}
+
+/**
+ * Frame both fighters.
+ *
+ * Two things used to let a fighter leave the screen. The zoom-out was capped at
+ * a fixed 1500 world units of width, so any separation past ~1000 units simply
+ * ran off the edge; and the camera was smoothed toward its target with no
+ * guarantee attached, so even a correct target was only reached several frames
+ * later — during which a running fighter was already gone.
+ *
+ * Both are fixed by separating the two jobs. The *target* is computed from the
+ * real body extents with no arbitrary cap, and the *smoothed* result is then
+ * hard-clamped to contain that extent. Smoothing may only ever make the shot
+ * looser than it needs to be, never tighter: the camera zooms out and pans to
+ * keep up instantly, and eases only when relaxing back in.
+ */
 function computeCamera(gs: GameState, prev: Camera | null): Camera {
-  const px = gs.player.pos[0];
-  const cx = gs.cpu.pos[0];
+  const a = bodyExtent(gs.player);
+  const b = bodyExtent(gs.cpu);
 
-  const heightScale = GAME_H / CAM_VIEW_HEIGHT;
-  const span = Math.abs(px - cx) + CAM_PAD * 2;
-  const widthScale = GAME_W / Math.min(CAM_MAX_WIDTH, span);
-  const scale = Math.min(heightScale, widthScale);
+  const left = Math.min(a.left, b.left) - CAM_PAD_X;
+  const right = Math.max(a.right, b.right) + CAM_PAD_X;
+  const top = Math.max(a.top, b.top) + CAM_PAD_TOP;
 
-  const viewW = GAME_W / scale;
-  let centre = (px + cx) / 2;
+  // ── Zoom ──
+  const maxScale = GAME_H / CAM_VIEW_HEIGHT;
+  let scale = Math.min(maxScale, GAME_W / Math.max(1, right - left));
 
-  // Clamp to the stage, with a little overscan so a cornered fighter is inset
-  // from the frame edge rather than clipped by it.
+  // Vertical: pan the floor down first, and only zoom out once the floor has
+  // reached the bottom of the screen and there is still a head above the top.
+  const baseFloorPy = GAME_H * FLOOR_FRAC;
+  const maxFloorPy = GAME_H * FLOOR_MAX_FRAC;
+  if (top * scale > maxFloorPy) scale = maxFloorPy / top;
+  scale = Math.max(MIN_SCALE, scale);
+
+  const floorPy = Math.min(maxFloorPy, Math.max(baseFloorPy, top * scale));
+
+  // ── Pan ──
+  const halfView = GAME_W / scale / 2;
+  let x = (left + right) / 2;
+
+  // Don't show past the walls unless the view is wider than the stage itself.
+  // A little overscan keeps a cornered fighter inset from the frame edge.
   const overscan = 120;
-  const limit = STAGE_HALF + overscan - viewW / 2;
-  centre = limit <= 0 ? 0 : Math.max(-limit, Math.min(limit, centre));
+  const [wallL, wallR] = gs.stageBounds;
+  const lo = wallL - overscan + halfView;
+  const hi = wallR + overscan - halfView;
+  if (lo <= hi) x = Math.max(lo, Math.min(hi, x));
+  else x = (wallL + wallR) / 2;
 
-  let floorPy = GAME_H * FLOOR_FRAC;
-  const highest = Math.max(gs.player.pos[1], gs.cpu.pos[1]);
-  const headroom = floorPy - highest * scale;
-  if (headroom < GAME_H * 0.14) floorPy += GAME_H * 0.14 - headroom;
-
-  const target: Camera = { x: centre, scale, floorPy };
+  const target: Camera = { x, scale, floorPy };
   if (!prev) return target;
 
   const k = 0.12;
-  return {
+  const sm: Camera = {
     x: prev.x + (target.x - prev.x) * k,
     scale: prev.scale + (target.scale - prev.scale) * k,
     floorPy: prev.floorPy + (target.floorPy - prev.floorPy) * k,
   };
+
+  // ── The guarantee ──
+  // Zooming out is applied immediately; zooming back in is what eases.
+  sm.scale = Math.min(sm.scale, target.scale);
+  // Likewise the floor only ever drops instantly, to open headroom.
+  sm.floorPy = Math.max(sm.floorPy, target.floorPy);
+  // With the scale pinned at or below target, the frame is at least as wide as
+  // the extent, so these two bounds cannot cross.
+  const half = GAME_W / sm.scale / 2;
+  sm.x = Math.max(right - half, Math.min(left + half, sm.x));
+
+  return sm;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -206,6 +279,17 @@ export default function GameCanvas({
       const gx = (x: number) => (x - cam.x) * cam.scale + GAME_W / 2;
       const gy = (y: number) => cam.floorPy - y * cam.scale;
 
+      if (process.env.NODE_ENV !== "production") {
+        // Dev handle: the framing invariant is only checkable against the
+        // camera the renderer actually used, not a re-derived one.
+        (window as unknown as Record<string, unknown>).__camera = {
+          ...cam,
+          bodies: [bodyExtent(gs.player), bodyExtent(gs.cpu)].map(e => ({
+            l: gx(e.left), r: gx(e.right), t: gy(e.top), b: gy(0),
+          })),
+        };
+      }
+
       drawStage(ctx, stage, GAME_W, GAME_H, cam.x, Math.round(cam.floorPy));
 
       const objects = gs.objects ?? [gs.player, gs.cpu];
@@ -235,6 +319,13 @@ export default function GameCanvas({
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
+
+    if (process.env.NODE_ENV !== "production") {
+      // rAF does not run in a hidden tab, which makes the renderer untestable
+      // there. __redraw() is the synchronous equivalent of one displayed frame,
+      // the counterpart to the engine's __step().
+      (window as unknown as Record<string, unknown>).__redraw = drawFrame;
+    }
     return () => cancelAnimationFrame(animRef.current);
   }, [drawFrame]);
 

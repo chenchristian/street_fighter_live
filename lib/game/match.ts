@@ -51,6 +51,9 @@ export function createGame(chars: MatchChars, seed = Date.now()): GameState {
   player.device = new InputDevice();
   cpu.device = new InputDevice();
 
+  const bb = chars.stage.boxes["boundingbox"]?.boxes?.[0];
+  const stageBounds: [number, number] = bb ? [bb[0], bb[0] + bb[2]] : [-1300, 1300];
+
   return {
     player,
     cpu,
@@ -65,6 +68,7 @@ export function createGame(chars: MatchChars, seed = Date.now()): GameState {
     winner: null,
     announcer: "ROUND 1",
     combo: null,
+    stageBounds,
   };
 }
 
