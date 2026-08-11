@@ -54,6 +54,20 @@ export const TUNING = {
      * release. Clamped below 1 internally so it can never stick on forever.
      */
     walkCoast: 0.5,
+
+    /**
+     * How fast you must move UP to jump — an upward speed in body widths per
+     * frame (torso rising, normalised by shoulder width like the walk). A jump
+     * is a one-shot: you launch, the engine plays the whole arc, and no further
+     * jump fires until you land. Set high enough to reject the small vertical
+     * bob of walking, low enough that a modest hop counts — LOWER = a gentle
+     * pop jumps; HIGHER = you must spring harder.
+     */
+    jumpThreshold: 0.2,
+
+    /** How many frames the up-press is held once a jump launches — just long
+     *  enough for the engine to register the jump, like a quick tap of up. */
+    jumpPressFrames: 4,
   },
 
   // ── CPU opponent ────────────────────────────────────────────────────────────

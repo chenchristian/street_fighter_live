@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
   landmarksToVector,
-  WalkTracker,
+  MotionTracker,
   drawSkeleton,
   SEQUENCE_LENGTH,
   CONFIDENCE_THRESHOLD,
@@ -17,6 +17,8 @@ export interface PredictionState {
   label: string;
   confidence: number;
   direction: "LEFT" | "RIGHT" | null;
+  /** An upward launch was detected since the last prediction (a jump). */
+  jump: boolean;
   allProbs: number[];
   /** Argmax index in the model's own output order. */
   index: number;
@@ -35,7 +37,10 @@ export function usePosePipeline() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
-  const walkRef = useRef(new WalkTracker());
+  const motionRef = useRef(new MotionTracker());
+  /** Latches an upward launch between prediction deliveries so a jump detected
+   *  on a pose frame that isn't an inference frame is never dropped. */
+  const jumpLatch = useRef(false);
   const seqBuf = useRef<Float32Array[]>([]);
 
   const [status, setStatus] = useState<PipelineStatus>("idle");
@@ -145,7 +150,10 @@ export function usePosePipeline() {
           seqBuf.current.push(vec);
           if (seqBuf.current.length > SEQUENCE_LENGTH) seqBuf.current.shift();
 
-          const { dir } = walkRef.current.update(lms);
+          const { dir, jump } = motionRef.current.update(lms);
+          // Latch the launch: it must survive until the next prediction is
+          // delivered, which only happens on inference frames.
+          if (jump) jumpLatch.current = true;
 
           if (seqBuf.current.length === SEQUENCE_LENGTH && !inferring) {
             inferring = true;
@@ -157,11 +165,14 @@ export function usePosePipeline() {
               lastMs = performance.now() - t0;
               inferCount++;
 
+              const jumped = jumpLatch.current;
+              jumpLatch.current = false;
               const label = result.confidence < CONFIDENCE_THRESHOLD ? "idle" : result.label;
               setPrediction({
                 label,
                 confidence: result.confidence,
                 direction: dir,
+                jump: jumped,
                 // Copy: the panel holds this across frames, and inference output
                 // buffers are commonly reused.
                 allProbs: result.allProbs.slice(),
@@ -171,7 +182,8 @@ export function usePosePipeline() {
           }
         } else {
           bodySeen = false;
-          walkRef.current.reset();
+          motionRef.current.reset();
+          jumpLatch.current = false;
           seqBuf.current = [];
         }
 

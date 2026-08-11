@@ -35,21 +35,27 @@ export function landmarksToVector(lms: NLandmark[]): Float32Array {
 
 export type WalkDir = "LEFT" | "RIGHT" | null;
 
-export interface WalkDebug {
+export interface MotionDebug {
   /** Walk direction in IMAGE space (the downstream mirror-flip is applied
    *  later, in CvSource.setPrediction). null = neutral. */
   dir: WalkDir;
-  /** Signed speed envelope driving the walk, body widths/frame. + = image-right. */
+  /** Signed horizontal speed envelope, body widths/frame. + = image-right. */
   vel: number;
-  /** Envelope magnitude this frame (|vel|). */
+  /** Horizontal envelope magnitude this frame (|vel|). */
   speed: number;
+  /** Normalised UPWARD torso speed this frame, body widths/frame (+ = up). */
+  vyUp: number;
+  /** True on a frame whose upward speed crosses cv.jumpThreshold: a launch. */
+  jump: boolean;
   /** Reference scale used this frame (shoulder width, floored). */
   scale: number;
-  /** True while the envelope is coasting down after motion stopped. */
+  /** True while the horizontal envelope is coasting down after motion stopped. */
   coasting: boolean;
 }
 
-const NEUTRAL: WalkDebug = { dir: null, vel: 0, speed: 0, scale: 0, coasting: false };
+const NEUTRAL: MotionDebug = {
+  dir: null, vel: 0, speed: 0, vyUp: 0, jump: false, scale: 0, coasting: false,
+};
 
 /**
  * Fixed light smoothing on the torso centre, applied before velocity is
@@ -62,40 +68,46 @@ const CENTER_SMOOTH = 0.5;
 const MAX_COAST = 0.97;
 
 /**
- * Velocity-based walk detection (normalised).
+ * Velocity-based motion detection (normalised) — walk on the horizontal axis,
+ * jump on the vertical.
  *
- * You walk while you are MOVING and stop when you stop — the direct, momentary
- * feel. Two things make that usable rather than twitchy:
+ * Horizontal (walk): you walk while you are MOVING and stop when you stop — the
+ * direct, momentary feel. Torso-only centre + shoulder-width normalisation make
+ * the trigger a speed in *body widths per frame*, the same close to the camera
+ * or far back. An asymmetric envelope snaps up instantly to new motion (you
+ * move → you walk) but eases *down* at cv.walkCoast after you stop, so a real
+ * walk — whose speed naturally flickers — reads as one continuous walk.
  *
- *   * Torso-only centre + shoulder-width normalisation, so the trigger is a
- *     speed in *body widths per frame* and means the same close to the camera
- *     or far back (the depth-independence we wanted to keep).
- *   * An asymmetric envelope: it snaps up instantly to new motion (you move →
- *     you walk, no lag on onset) but eases *down* at a tunable rate after you
- *     stop. That release rate is cv.walkCoast: 0 = stop the instant motion
- *     drops, →1 = a long glide. It's what lets a real walk — whose frame-to-
- *     frame speed naturally flickers — read as one continuous walk instead of
- *     stuttering, and it's the single knob for how sharply walking ends.
+ * Vertical (jump): a jump is a one-shot, so this only reports the raw upward
+ * launch — an upward torso speed past cv.jumpThreshold. The edge-detection and
+ * the "no second jump until you land" debounce live downstream in CvSource,
+ * where the grounded state is known. Triggering on the launch VELOCITY (not the
+ * apex height) fires at take-off, the first frame or two, before fast-motion
+ * blur wrecks tracking at the top of the arc.
  *
  * Stateful: the pipeline holds one instance across frames and resets it when
  * the body leaves view.
  */
-export class WalkTracker {
+export class MotionTracker {
   private cxSmooth: number | null = null;
+  private cySmooth: number | null = null;
   private prevCx: number | null = null;
-  /** Speed-magnitude envelope, body widths/frame. */
+  private prevCy: number | null = null;
+  /** Horizontal speed-magnitude envelope, body widths/frame. */
   private env = 0;
-  /** Latched sign of the current motion (+1 image-right, -1 image-left). */
+  /** Latched sign of the current horizontal motion (+1 right, -1 left). */
   private dirSign = 0;
 
   reset(): void {
     this.cxSmooth = null;
+    this.cySmooth = null;
     this.prevCx = null;
+    this.prevCy = null;
     this.env = 0;
     this.dirSign = 0;
   }
 
-  update(lms: NLandmark[]): WalkDebug {
+  update(lms: NLandmark[]): MotionDebug {
     const pt = (i: number): NLandmark | null => {
       const lm = lms[i];
       return lm && (lm.visibility ?? 1) > 0.5 ? lm : null;
@@ -108,6 +120,7 @@ export class WalkTracker {
     const torso = [ls, rs, lh, rh].filter((p): p is NLandmark => p !== null);
     if (torso.length < 2) return { ...NEUTRAL, speed: this.env };
     const cx = torso.reduce((s, p) => s + p.x, 0) / torso.length;
+    const cy = torso.reduce((s, p) => s + p.y, 0) / torso.length;
 
     // Reference scale: shoulder width (survives crouching, unlike torso
     // height); fall back to torso height if a shoulder is hidden; floor it so a
@@ -120,19 +133,24 @@ export class WalkTracker {
     }
     scale = Math.max(MIN_REF_SCALE, scale);
 
-    // Denoise the centre, then take its frame-to-frame velocity.
+    // Denoise both axes, then take their frame-to-frame velocity.
     this.cxSmooth = this.cxSmooth === null
-      ? cx
-      : CENTER_SMOOTH * cx + (1 - CENTER_SMOOTH) * this.cxSmooth;
-    if (this.prevCx === null) {
+      ? cx : CENTER_SMOOTH * cx + (1 - CENTER_SMOOTH) * this.cxSmooth;
+    this.cySmooth = this.cySmooth === null
+      ? cy : CENTER_SMOOTH * cy + (1 - CENTER_SMOOTH) * this.cySmooth;
+    if (this.prevCx === null || this.prevCy === null) {
       this.prevCx = this.cxSmooth;
-      return { dir: null, vel: 0, speed: 0, scale, coasting: false };
+      this.prevCy = this.cySmooth;
+      return { ...NEUTRAL, scale };
     }
-    const d = (this.cxSmooth - this.prevCx) / scale;   // body widths / frame
+    const d = (this.cxSmooth - this.prevCx) / scale;          // body widths / frame
+    // Image y grows downward, so rising = y decreasing → prev - current.
+    const vyUp = (this.prevCy - this.cySmooth) / scale;
     this.prevCx = this.cxSmooth;
+    this.prevCy = this.cySmooth;
 
-    // Asymmetric envelope: instant attack, coasted release.
-    const { walkThreshold, walkCoast } = TUNING.cv;
+    // ── Horizontal: asymmetric envelope, instant attack, coasted release ──
+    const { walkThreshold, walkCoast, jumpThreshold } = TUNING.cv;
     const coast = Math.min(Math.max(walkCoast, 0), MAX_COAST);
     const mag = Math.abs(d);
     let coasting = false;
@@ -149,21 +167,25 @@ export class WalkTracker {
         ? (this.dirSign > 0 ? "RIGHT" : "LEFT")
         : null;
 
-    return { dir, vel: this.dirSign * this.env, speed: this.env, scale, coasting };
+    // ── Vertical: raw upward-launch flag; debounce is downstream ──
+    const jump = vyUp > jumpThreshold;
+
+    return { dir, vel: this.dirSign * this.env, speed: this.env, vyUp, jump, scale, coasting };
   }
 }
 
 if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
-  // Dev handle: walk logic is only checkable synthetically here, since the
+  // Dev handle: motion logic is only checkable synthetically here, since the
   // preview pane can't grant camera access. Feed it a moving fake torso —
-  // velocity comes from the CHANGE in cx between frames, e.g.:
-  //   const t = new window.__WalkTracker(), mk = (cx, sw=0.2) => {
+  // velocity comes from the CHANGE in cx/cy between frames, e.g.:
+  //   const t = new window.__MotionTracker(), mk = (cx, cy=0.5, sw=0.2) => {
   //     const a = Array(33).fill(0).map(() => ({x:0,y:0,visibility:0}));
-  //     a[11]={x:cx-sw/2,y:.3,visibility:1}; a[12]={x:cx+sw/2,y:.3,visibility:1};
-  //     a[23]={x:cx-sw/2,y:.7,visibility:1}; a[24]={x:cx+sw/2,y:.7,visibility:1};
+  //     a[11]={x:cx-sw/2,y:cy-.2,visibility:1}; a[12]={x:cx+sw/2,y:cy-.2,visibility:1};
+  //     a[23]={x:cx-sw/2,y:cy+.2,visibility:1}; a[24]={x:cx+sw/2,y:cy+.2,visibility:1};
   //     return a; };
-  //   t.update(mk(0.50)); t.update(mk(0.47));  // stepped left → dir LEFT
-  (window as unknown as Record<string, unknown>).__WalkTracker = WalkTracker;
+  //   t.update(mk(0.5)); t.update(mk(0.47));       // stepped left → dir LEFT
+  //   t.update(mk(0.5)); t.update(mk(0.5, 0.4));   // torso up → jump true
+  (window as unknown as Record<string, unknown>).__MotionTracker = MotionTracker;
 }
 
 // Skeleton connections for drawing

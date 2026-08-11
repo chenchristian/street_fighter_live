@@ -107,12 +107,24 @@ export class CvSource {
   static readonly PRESS_FRAMES = TUNING.cv.pressFrames;
   /** Frames a fired label is ignored for, so a held pose fires once. */
   static readonly REPEAT_LOCKOUT = TUNING.cv.repeatLockout;
+  /** Frames the jump's up-press is held — long enough for the engine to launch. */
+  static readonly JUMP_PRESS_FRAMES = TUNING.cv.jumpPressFrames;
+  /** After a jump fires, ignore new jumps for this long — long enough to clear
+   *  the pre-takeoff jumpsquad so we don't double-fire before leaving the
+   *  ground. After it, arming is purely "am I grounded", which self-heals if a
+   *  jump was eaten by landing recovery or hitstun. */
+  static readonly JUMP_LOCKOUT = 15;
 
   private move: CvMove | null = null;
   private pressTimer = 0;
   private lockout = 0;
   private lastLabel = "idle";
   private walk = 0;
+  // ── Jump: a one-shot up-press, armed only while grounded ──
+  private jumpTimer = 0;      // frames of up-press remaining
+  private jumpDir = 0;        // screen-absolute side at launch (for diagonals)
+  private jumpLockout = 0;    // post-fire cooldown covering takeoff
+  private jumpArmed = true;   // grounded && past the lockout (updated in read)
   /** Label of the move currently being performed, for the UI. Null when idle. */
   activeLabel: string | null = null;
 
@@ -122,16 +134,31 @@ export class CvSource {
     this.lockout = 0;
     this.lastLabel = "idle";
     this.walk = 0;
+    this.jumpTimer = 0;
+    this.jumpDir = 0;
+    this.jumpLockout = 0;
+    this.jumpArmed = true;
     this.activeLabel = null;
   }
 
   /** Feed a new classification. Safe to call at the classifier's own rate. */
-  setPrediction(label: string, direction: "LEFT" | "RIGHT" | null): void {
+  setPrediction(label: string, direction: "LEFT" | "RIGHT" | null, jump = false): void {
     // Walking is a continuous signal, not an edge. The camera preview is
     // CSS-mirrored while MediaPipe reports unmirrored coordinates, so the
     // detector's LEFT is the player stepping to their own right — which is
     // screen-right. Facing is applied later by InputDevice, not here.
     this.walk = direction === "LEFT" ? 1 : direction === "RIGHT" ? -1 : 0;
+
+    // Jump is an edge: fire once on a launch, only if armed (grounded, past the
+    // takeoff lockout — see read()) and not already mid-jump. The side is
+    // whatever direction we're moving as we leave the ground (same screen-
+    // absolute convention as walk), giving up / up-forward / up-back.
+    if (jump && this.jumpArmed && this.jumpTimer === 0) {
+      this.jumpTimer = CvSource.JUMP_PRESS_FRAMES;
+      this.jumpDir = this.walk;
+      this.jumpLockout = CvSource.JUMP_LOCKOUT;
+      this.jumpArmed = false;
+    }
 
     if (label === "idle" || label === this.lastLabel) {
       this.lastLabel = label;
@@ -148,21 +175,41 @@ export class CvSource {
     this.lockout = CvSource.REPEAT_LOCKOUT;
   }
 
-  /** Advance one game frame and produce this frame's raw input. */
-  read(): { raw: RawInput; commands: string[] } {
+  /**
+   * Advance one game frame and produce this frame's raw input.
+   *
+   * @param grounded  whether the fighter this source drives is on the ground.
+   *                  Jump arms only while grounded and past the takeoff lockout,
+   *                  so you can't jump again in mid-air, but a jump eaten by
+   *                  landing recovery re-arms as soon as you're standing again.
+   */
+  read(grounded = true): { raw: RawInput; commands: string[] } {
     const raw = emptyRawInput();
     const commands: string[] = [];
+
+    if (this.jumpLockout > 0) this.jumpLockout--;
+    this.jumpArmed = grounded && this.jumpLockout === 0;
 
     if (this.lockout > 0) {
       this.lockout--;
       if (this.lockout === 0) this.activeLabel = null;
     }
 
+    // Jump owns the direction while it's launching (up + side), taking
+    // precedence over walk. A simultaneous move still contributes its buttons,
+    // so a jump-in attack works.
+    const jumping = this.jumpTimer > 0;
+    if (jumping) {
+      raw.dir[0] = this.jumpDir;
+      raw.dir[1] = 1;
+      this.jumpTimer--;
+    }
+
     if (this.move && this.pressTimer > 0) {
       for (const b of this.move.buttons) {
         if (b >= 1 && b <= BUTTON_COUNT) raw.buttons[b] = true;
       }
-      if (this.move.dir) {
+      if (this.move.dir && !jumping) {
         raw.dir[0] = this.move.dir[0];
         raw.dir[1] = this.move.dir[1];
       }
@@ -173,7 +220,7 @@ export class CvSource {
       }
       this.pressTimer--;
       if (this.pressTimer === 0) this.move = null;
-    } else if (this.walk !== 0) {
+    } else if (!jumping && this.walk !== 0) {
       raw.dir[0] = this.walk;
     }
 

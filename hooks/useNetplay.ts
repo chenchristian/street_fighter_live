@@ -106,7 +106,7 @@ export function useNetplay(prediction: PredictionState | null, keyboardEnabled =
   }, []);
 
   useEffect(() => {
-    if (prediction) cvRef.current.setPrediction(prediction.label, prediction.direction);
+    if (prediction) cvRef.current.setPrediction(prediction.label, prediction.direction, prediction.jump);
   }, [prediction]);
 
   const stopTimer = (ref: React.RefObject<ReturnType<typeof setInterval> | null>) => {
@@ -137,7 +137,10 @@ export function useNetplay(prediction: PredictionState | null, keyboardEnabled =
         const link = linkRef.current;
         if (!link?.isConnected) return;
 
-        const cv = cvRef.current.read();
+        // Local player is p1 when hosting, p2 when joining; its grounded state
+        // re-arms the jump.
+        const localChar = isHostRef.current ? g.player : g.cpu;
+        const cv = cvRef.current.read(localChar.fet === "grounded");
         let raw = cv.raw;
         if (kbEnabledRef.current) {
           const kb = kbRef.current.read();

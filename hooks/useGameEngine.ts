@@ -111,6 +111,9 @@ export function useGameEngine(
         Object.assign(window as unknown as Record<string, unknown>, {
           __game: gs,
           __clock: clockRef.current,
+          // The player's CV input source, so the jump/walk path can be driven
+          // and verified end-to-end (setPrediction here → read() in stepOnce).
+          __cv: cvRef.current,
           __step: (n = 1) => {
             const g = gameRef.current;
             const stg = stageRef.current;
@@ -146,7 +149,7 @@ export function useGameEngine(
         };
 
         // Player: CV is the real input; keyboard is an additive debug override.
-        const cv = cvRef.current.read();
+        const cv = cvRef.current.read(g.player.fet === "grounded");
         inputs.player = cv.raw;
         inputs.playerCommands = cv.commands;
         if (opts.keyboardEnabled) {
@@ -186,7 +189,7 @@ export function useGameEngine(
   // Push classifier output into the CV input source (an external system).
   useEffect(() => {
     if (!prediction) return;
-    cvRef.current.setPrediction(prediction.label, prediction.direction);
+    cvRef.current.setPrediction(prediction.label, prediction.direction, prediction.jump);
   }, [prediction]);
 
   useEffect(() => {
