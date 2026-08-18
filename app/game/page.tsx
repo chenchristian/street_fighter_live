@@ -62,7 +62,9 @@ export default function GamePage() {
   const onMenuHit = useCallback((hit: MenuHit) => {
     setCursor(hit.row);
     const field = FIELDS[hit.row];
-    if (hit.dir !== 0) adjust(field, hit.dir);
+    // A strip segment picks that mode directly.
+    if (field === "difficulty" && hit.seg != null) setMode(MODES[hit.seg]);
+    else if (hit.dir !== 0) adjust(field, hit.dir);
     else activate(field);
   }, [adjust, activate]);
 
@@ -104,7 +106,10 @@ export default function GamePage() {
       subtitle: "LIVE - CONTROLLED BY YOUR BODY",
       cursor,
       rows: [
-        { label: "DIFFICULTY", value: mode.toUpperCase(), cycles: true },
+        {
+          label: "DIFFICULTY",
+          strip: { options: MODES.map(m => m.toUpperCase()), index: MODES.indexOf(mode) },
+        },
         { label: "KEYBOARD", value: keyboardEnabled ? "ON" : "OFF", cycles: true },
         { label: "START", value: "" },
       ],

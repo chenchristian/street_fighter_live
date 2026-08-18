@@ -71,6 +71,9 @@ export interface MenuRow {
   cycles?: boolean;
   /** Greyed out — shown but currently has no effect. */
   dim?: boolean;
+  /** Renders the row as a segmented strip — all options visible at once, the
+   *  chosen one highlighted — instead of a single cycling value. */
+  strip?: { options: string[]; index: number };
 }
 
 export interface MenuModel {
@@ -100,15 +103,34 @@ export interface MenuHit {
   row: number;
   /** -1 previous value, +1 next value, 0 select/confirm the row. */
   dir: -1 | 0 | 1;
+  /** Which segment was clicked on a strip row (picks that option directly). */
+  seg?: number;
+}
+
+/** Height of one strip row — a label line plus the segment strip below it. */
+const STRIP_H = 30;
+const rowHeight = (row: MenuRow) => (row.strip ? STRIP_H : MENU.rowH);
+
+/** Top y of each row, so drawing and hit-testing share one source of truth. */
+function rowTops(menu: MenuModel): number[] {
+  const tops: number[] = [];
+  let y = MENU.startY;
+  for (const r of menu.rows) { tops.push(y); y += rowHeight(r); }
+  return tops;
 }
 
 export function hitTestMenu(menu: MenuModel, mx: number, my: number): MenuHit | null {
-  const top = MENU.startY - 3;
-  const row = Math.floor((my - top) / MENU.rowH);
-  if (row < 0 || row >= menu.rows.length) return null;
   if (mx < MENU.hlLeft || mx > MENU.hlRight) return null;
+  const tops = rowTops(menu);
+  const row = tops.findIndex((t, i) => my >= t - 3 && my < t - 3 + rowHeight(menu.rows[i]));
+  if (row < 0) return null;
 
   const def = menu.rows[row];
+  if (def.strip) {
+    const w = MENU.hlRight - MENU.hlLeft;
+    const seg = Math.floor(((mx - MENU.hlLeft) / w) * def.strip.options.length);
+    return { row, dir: 0, seg: Math.max(0, Math.min(def.strip.options.length - 1, seg)) };
+  }
   if (def.cycles) {
     const p = MENU.arrowPad;
     if (mx >= MENU.arrowLX - p && mx <= MENU.arrowLX + GLYPH_HIT + p) return { row, dir: -1 };
@@ -702,6 +724,34 @@ function drawCaret(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   drawArrow(ctx, x, y, 1, "#ffcc44");
 }
 
+/**
+ * Segmented strip: every option on screen at once, the chosen one lit as a
+ * solid gold chip with dark text — the classic arcade select look.
+ */
+function drawStrip(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number,
+  strip: { options: string[]; index: number }
+): void {
+  const n = strip.options.length;
+  const cw = w / n;
+  for (let k = 0; k < n; k++) {
+    const on = k === strip.index;
+    const left = Math.round(x + k * cw);
+    const cx = Math.round(x + k * cw + cw / 2);
+
+    if (on) {
+      ctx.fillStyle = "#ffcc44";
+      ctx.fillRect(left + 2, y - 2, Math.round(cw) - 4, 13);
+    }
+    drawText(ctx, strip.options[k], cx, y, {
+      colour: on ? INK.black : INK.steel,
+      outline: on ? 0 : INK.black,
+      align: "center",
+    });
+  }
+}
+
 function drawMenu(ctx: CanvasRenderingContext2D, menu: MenuModel): void {
   dim(ctx);
 
@@ -714,10 +764,19 @@ function drawMenu(ctx: CanvasRenderingContext2D, menu: MenuModel): void {
     });
   }
 
+  const tops = rowTops(menu);
   for (let i = 0; i < menu.rows.length; i++) {
     const row = menu.rows[i];
-    const y = MENU.startY + i * MENU.rowH;
+    const y = tops[i];
     const selected = i === menu.cursor;
+
+    if (row.strip) {
+      if (selected) drawCaret(ctx, 62, y + 1);
+      const labelInk = selected ? INK.paper : INK.steel;
+      drawText(ctx, row.label, MENU.labelX, y, { colour: labelInk, outline: INK.black });
+      drawStrip(ctx, MENU.hlLeft, y + 13, MENU.hlRight - MENU.hlLeft, row.strip);
+      continue;
+    }
 
     if (selected) {
       ctx.fillStyle = "rgba(255,204,68,.14)";
