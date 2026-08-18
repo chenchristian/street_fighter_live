@@ -20,12 +20,15 @@ interface CvPanelProps {
   camAspect: string | null;
   status: string;
   errorMsg?: string;
+  /** Whether keyboard input is active — shapes the no-camera message. */
+  keyboardEnabled?: boolean;
   /** Extra rows rendered under the legend (netplay telemetry). */
   children?: React.ReactNode;
 }
 
 export default function CvPanel({
-  videoRef, overlayRef, labels, prediction, stats, camAspect, status, errorMsg, children,
+  videoRef, overlayRef, labels, prediction, stats, camAspect, status, errorMsg,
+  keyboardEnabled = true, children,
 }: CvPanelProps) {
   const barsRef = useRef<HTMLCanvasElement>(null);
   const peakRef = useRef<PeakHold>(new PeakHold());
@@ -101,7 +104,8 @@ export default function CvPanel({
 
       {status === "error" && (
         <p className="cv-legend" style={{ color: "var(--blood)" }}>
-          {errorMsg || "Camera unavailable."} Keyboard controls still work.
+          {errorMsg || "Camera unavailable."}{" "}
+          {keyboardEnabled ? "Keyboard controls still work." : "Switch Mode to Keyboard to play."}
         </p>
       )}
 

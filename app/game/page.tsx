@@ -9,8 +9,10 @@ import GameShell from "@/components/GameShell";
 import CvPanel from "@/components/CvPanel";
 import GameCanvas, { type MenuModel, type MenuHit } from "./GameCanvas";
 
-type MenuField = "difficulty" | "keyboard" | "start";
-const FIELDS: MenuField[] = ["difficulty", "keyboard", "start"];
+type MenuField = "difficulty" | "input" | "start";
+const FIELDS: MenuField[] = ["difficulty", "input", "start"];
+// The MODE row: index 0 = webcam (body control), 1 = keyboard.
+const INPUT_MODES = ["WEBCAM", "KEYBOARD"];
 
 // One combined control. "Practice" is the old punching bag — a dummy that takes
 // no input; the other three set the CPU AI's difficulty.
@@ -20,7 +22,9 @@ const MODES: GameMode[] = ["practice", "easy", "medium", "hard"];
 export default function GamePage() {
   const [mode, setMode] = useState<GameMode>("medium");
   const [showBoxes, setShowBoxes] = useState(false);
-  const [keyboardEnabled, setKeyboardEnabled] = useState(true);
+  // Webcam is the default control — the game is body-controlled; keyboard is the
+  // alternative for testing or no camera.
+  const [keyboardEnabled, setKeyboardEnabled] = useState(false);
   const [cursor, setCursor] = useState(0);
   const [started, setStarted] = useState(false);
 
@@ -50,20 +54,21 @@ export default function GamePage() {
     const cycle = <T,>(list: T[], cur: T, d: number): T =>
       list[(list.indexOf(cur) + d + list.length) % list.length];
     if (field === "difficulty") setMode(v => cycle(MODES, v, dir));
-    else if (field === "keyboard") setKeyboardEnabled(v => !v);
+    else if (field === "input") setKeyboardEnabled(v => !v);
   }, []);
 
   /** Enter, or a click on the row body rather than one of its arrows. */
   const activate = useCallback((field: MenuField) => {
     if (field === "start") handleStart();
-    else if (field === "keyboard") setKeyboardEnabled(v => !v);
+    else if (field === "input") setKeyboardEnabled(v => !v);
   }, [handleStart]);
 
   const onMenuHit = useCallback((hit: MenuHit) => {
     setCursor(hit.row);
     const field = FIELDS[hit.row];
-    // A strip segment picks that mode directly.
+    // A strip segment picks that option directly.
     if (field === "difficulty" && hit.seg != null) setMode(MODES[hit.seg]);
+    else if (field === "input" && hit.seg != null) setKeyboardEnabled(hit.seg === 1);
     else if (hit.dir !== 0) adjust(field, hit.dir);
     else activate(field);
   }, [adjust, activate]);
@@ -110,7 +115,10 @@ export default function GamePage() {
           label: "DIFFICULTY",
           strip: { options: MODES.map(m => m.toUpperCase()), index: MODES.indexOf(mode) },
         },
-        { label: "KEYBOARD", value: keyboardEnabled ? "ON" : "OFF", cycles: true },
+        {
+          label: "MODE",
+          strip: { options: INPUT_MODES, index: keyboardEnabled ? 1 : 0 },
+        },
         { label: "START", value: "" },
       ],
       footer: [
@@ -155,6 +163,7 @@ export default function GamePage() {
           camAspect={camAspect}
           status={poseStatus}
           errorMsg={poseErr}
+          keyboardEnabled={keyboardEnabled}
         />
       }
     >
