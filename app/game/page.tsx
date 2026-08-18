@@ -9,23 +9,25 @@ import GameShell from "@/components/GameShell";
 import CvPanel from "@/components/CvPanel";
 import GameCanvas, { type MenuModel, type MenuHit } from "./GameCanvas";
 
-type MenuField = "opponent" | "difficulty" | "keyboard" | "boxes" | "start";
-const FIELDS: MenuField[] = ["opponent", "difficulty", "keyboard", "boxes", "start"];
+type MenuField = "difficulty" | "keyboard" | "start";
+const FIELDS: MenuField[] = ["difficulty", "keyboard", "start"];
 
-const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
-const OPPONENTS: CpuMode[] = ["random", "punchingBag"];
-const OPPONENT_LABEL: Record<CpuMode, string> = {
-  random: "CPU",
-  punchingBag: "PUNCH BAG",
-};
+// One combined control. "Practice" is the old punching bag — a dummy that takes
+// no input; the other three set the CPU AI's difficulty.
+type GameMode = "practice" | "easy" | "medium" | "hard";
+const MODES: GameMode[] = ["practice", "easy", "medium", "hard"];
 
 export default function GamePage() {
-  const [cpuMode, setCpuMode] = useState<CpuMode>("random");
-  const [difficulty, setDifficulty] = useState<Difficulty>("medium");
+  const [mode, setMode] = useState<GameMode>("medium");
   const [showBoxes, setShowBoxes] = useState(false);
   const [keyboardEnabled, setKeyboardEnabled] = useState(true);
   const [cursor, setCursor] = useState(0);
   const [started, setStarted] = useState(false);
+
+  // The engine still takes opponent kind and AI difficulty separately; derive
+  // both from the single menu choice.
+  const cpuMode: CpuMode = mode === "practice" ? "punchingBag" : "random";
+  const difficulty: Difficulty = mode === "practice" ? "medium" : mode;
 
   const {
     videoRef, canvasRef, status: poseStatus, prediction, labels,
@@ -47,17 +49,14 @@ export default function GamePage() {
   const adjust = useCallback((field: MenuField, dir: -1 | 1) => {
     const cycle = <T,>(list: T[], cur: T, d: number): T =>
       list[(list.indexOf(cur) + d + list.length) % list.length];
-    if (field === "opponent") setCpuMode(v => cycle(OPPONENTS, v, dir));
-    else if (field === "difficulty") setDifficulty(v => cycle(DIFFICULTIES, v, dir));
+    if (field === "difficulty") setMode(v => cycle(MODES, v, dir));
     else if (field === "keyboard") setKeyboardEnabled(v => !v);
-    else if (field === "boxes") setShowBoxes(v => !v);
   }, []);
 
   /** Enter, or a click on the row body rather than one of its arrows. */
   const activate = useCallback((field: MenuField) => {
     if (field === "start") handleStart();
     else if (field === "keyboard") setKeyboardEnabled(v => !v);
-    else if (field === "boxes") setShowBoxes(v => !v);
   }, [handleStart]);
 
   const onMenuHit = useCallback((hit: MenuHit) => {
@@ -105,28 +104,18 @@ export default function GamePage() {
       subtitle: "LIVE - CONTROLLED BY YOUR BODY",
       cursor,
       rows: [
-        { label: "OPPONENT", value: OPPONENT_LABEL[cpuMode], cycles: true },
-        {
-          label: "DIFFICULTY",
-          value: difficulty.toUpperCase(),
-          cycles: true,
-          // Difficulty only tunes the CPU AI; a punching bag takes no input at
-          // all, so the setting has nothing to act on. Say so rather than
-          // leaving a live-looking control that does nothing.
-          dim: cpuMode === "punchingBag",
-        },
+        { label: "DIFFICULTY", value: mode.toUpperCase(), cycles: true },
         { label: "KEYBOARD", value: keyboardEnabled ? "ON" : "OFF", cycles: true },
-        { label: "HITBOXES", value: showBoxes ? "ON" : "OFF", cycles: true },
         { label: "START", value: "" },
       ],
       footer: [
-        cpuMode === "punchingBag"
-          ? "PUNCH BAG IGNORES DIFFICULTY"
+        mode === "practice"
+          ? "PRACTICE - OPPONENT WON'T FIGHT BACK"
           : "ARROW KEYS OR CLICK TO CHANGE",
         "ENTER STARTS - STAND 6-8 FEET BACK",
       ],
     };
-  }, [started, cursor, cpuMode, difficulty, keyboardEnabled, showBoxes]);
+  }, [started, cursor, mode, keyboardEnabled]);
 
   const status = useMemo(() => {
     if (!started) return null;
@@ -147,7 +136,7 @@ export default function GamePage() {
               checked={showBoxes}
               onChange={e => setShowBoxes(e.target.checked)}
             />
-            <span>Boxes</span>
+            <span>Hitboxes</span>
           </label>
         </div>
       }

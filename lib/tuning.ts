@@ -63,7 +63,7 @@ export const TUNING = {
      * bob of walking, low enough that a modest hop counts — LOWER = a gentle
      * pop jumps; HIGHER = you must spring harder.
      */
-    jumpThreshold: 0.2,
+    jumpThreshold: 0.05,
 
     /** How many frames the up-press is held once a jump launches — just long
      *  enough for the engine to register the jump, like a quick tap of up. */
