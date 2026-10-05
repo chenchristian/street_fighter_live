@@ -26,6 +26,8 @@ export interface CpuConfig {
   comboChance: number;
   /** Probability of taking a special-move branch when one is available. */
   specialChance: number;
+  /** Idle frames after every action — higher means a slower attack tempo. */
+  actionPause: number;
 }
 
 export const DIFFICULTIES: Record<Difficulty, CpuConfig> = TUNING.cpu;
@@ -277,8 +279,8 @@ export class CpuController {
     this.script = script;
     this.stepIndex = 0;
     this.stepFrames = script[0]?.frames ?? 0;
-    // A short gap after every action, so the AI has recognisable recovery.
-    this.thinkTimer = 4;
+    // A gap after every action, so the AI has recognisable recovery.
+    this.thinkTimer = this.config.actionPause;
   }
 
   private advanceScript(cpu: CharState): RawInput {

@@ -73,11 +73,12 @@ export const TUNING = {
   // ── CPU opponent ────────────────────────────────────────────────────────────
   // One row per difficulty. reactionFrames is the delay between the world
   // changing and the AI being allowed to respond (lower = sharper). The four
-  // chances are probabilities, 0–1.
+  // chances are probabilities, 0–1. actionPause is the idle gap, in frames,
+  // after every action it performs (higher = slower tempo).
   cpu: {
-    easy:   { reactionFrames: 96, blockChance: 0.0625, aggression: 0.0875, comboChance: 0.025, specialChance: 0.0375 },
-    medium: { reactionFrames: 14, blockChance: 0.55, aggression: 0.55, comboChance: 0.35, specialChance: 0.30 },
-    hard:   { reactionFrames: 6,  blockChance: 0.85, aggression: 0.75, comboChance: 0.60, specialChance: 0.50 },
+    easy:   { reactionFrames: 96, blockChance: 0.0625, aggression: 0.0875, comboChance: 0.025, specialChance: 0.0375, actionPause: 24 },
+    medium: { reactionFrames: 14, blockChance: 0.55, aggression: 0.55, comboChance: 0.35, specialChance: 0.30, actionPause: 4 },
+    hard:   { reactionFrames: 6,  blockChance: 0.85, aggression: 0.75, comboChance: 0.60, specialChance: 0.50, actionPause: 4 },
   },
 
   // ── Camera ──────────────────────────────────────────────────────────────────
