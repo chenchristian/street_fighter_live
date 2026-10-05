@@ -75,7 +75,7 @@ export const TUNING = {
   // changing and the AI being allowed to respond (lower = sharper). The four
   // chances are probabilities, 0–1.
   cpu: {
-    easy:   { reactionFrames: 24, blockChance: 0.25, aggression: 0.35, comboChance: 0.10, specialChance: 0.15 },
+    easy:   { reactionFrames: 48, blockChance: 0.125, aggression: 0.175, comboChance: 0.05, specialChance: 0.075 },
     medium: { reactionFrames: 14, blockChance: 0.55, aggression: 0.55, comboChance: 0.35, specialChance: 0.30 },
     hard:   { reactionFrames: 6,  blockChance: 0.85, aggression: 0.75, comboChance: 0.60, specialChance: 0.50 },
   },
